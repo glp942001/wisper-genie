@@ -145,14 +145,11 @@ def main() -> None:
 
             latency.start_pipeline()
 
-            # Build Whisper initial prompt from dictionary + recent context
-            whisper_prompt_parts = []
-            if dictionary["whisper_hint"]:
-                whisper_prompt_parts.append(dictionary["whisper_hint"])
+            # Build Whisper initial prompt from dictionary terms ONLY.
+            # Do NOT include recent utterances — Whisper hallucinates from them
+            # when audio is unclear, producing the previous text instead of new speech.
+            whisper_prompt = dictionary["whisper_hint"] if dictionary["whisper_hint"] else None
             recent_ctx = transcript_buf.get_context(n=2)
-            if recent_ctx:
-                whisper_prompt_parts.append(recent_ctx)
-            whisper_prompt = ". ".join(whisper_prompt_parts) if whisper_prompt_parts else None
 
             # ASR
             with latency.track("asr"):
