@@ -140,6 +140,13 @@ def main() -> None:
                 return
 
             audio = np.concatenate(frames).ravel()
+
+            # Trim first 300ms — the push-to-talk start sound bleeds into
+            # the mic and Whisper transcribes it as "(air whooshing)" etc.
+            trim_samples = int(0.3 * cfg["audio"]["sample_rate"])  # 4800 @ 16kHz
+            if len(audio) > trim_samples * 2:
+                audio = audio[trim_samples:]
+
             duration_s = len(audio) / cfg["audio"]["sample_rate"]
             print(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")
 
