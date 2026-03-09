@@ -161,17 +161,6 @@ def build_cleanup_system(context: dict | None = None) -> str:
                 'For example, "two actually three" means three, not two.'
             )
 
-        field_text = context.get("field_text", "")
-        if field_text:
-            parts.append(
-                f"\nThe text field already contains: ...{field_text}\n"
-                "Continue naturally — match capitalization and tone of existing text."
-            )
-
-        recent = context.get("recent_utterances", "")
-        if recent:
-            parts.append(f"\nRecent utterances for context: {recent}")
-
     return "\n".join(parts)
 
 
