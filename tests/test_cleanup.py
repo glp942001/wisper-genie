@@ -13,8 +13,8 @@ from dictation.cleanup.ollama import OllamaCleanup
 class TestPrompts:
     def test_system_prompt_contains_key_rules(self):
         system = build_cleanup_system()
-        assert "NEVER answer" in system
-        assert "formatter" in system
+        assert "NEVER" in system
+        assert "Answer questions" in system
         assert "capitalization" in system.lower()
 
     def test_few_shot_messages_alternating_roles(self):
