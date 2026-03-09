@@ -80,16 +80,28 @@ class OllamaCleanup:
             cleaned = data.get("message", {}).get("content", "").strip()
             if not cleaned:
                 return raw_transcript
-            # Guard: if the LLM responded with commentary instead of
-            # formatting (e.g., "No meaningful text..."), fall back to raw.
-            # A valid cleanup should not be drastically longer than input.
+            # Guard: detect when the LLM commented instead of formatting.
+            # A 3B model will sometimes output meta-commentary, markdown
+            # emphasis, parenthetical notes, or refuse to format.
+            # In ALL these cases, fall back to the raw transcript.
+
+            # 1. Response wrapped in asterisks/parentheses = commentary
+            if cleaned.startswith("*") or cleaned.startswith("("):
+                print(f"[OllamaCleanup] LLM wrapped response in markers — using raw transcript.")
+                return raw_transcript
+
+            # 2. Response way longer than input = LLM rambling
             if len(cleaned) > len(raw_transcript) * 3 + 20:
                 print(f"[OllamaCleanup] Response too long vs input — using raw transcript.")
                 return raw_transcript
+
+            # 3. Known commentary phrases
             commentary_signals = [
                 "no meaningful", "no text", "not provided", "i can't",
                 "i cannot", "as an ai", "here is", "here's the",
-                "note:", "sorry",
+                "note:", "sorry", "provided in the input",
+                "no content", "no speech", "no audio",
+                "the input", "the transcript", "empty",
             ]
             cleaned_lower = cleaned.lower()
             if any(sig in cleaned_lower for sig in commentary_signals):
