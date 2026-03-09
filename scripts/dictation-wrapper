@@ -24,6 +24,9 @@ case "${1:-}" in
     autostart)
         python -m dictation.cli autostart "${@:2}"
         ;;
+    uninstall)
+        python -m dictation.cli uninstall
+        ;;
     --help|-h)
         echo "Wisper Genie — AI dictation tool"
         echo ""
@@ -32,6 +35,7 @@ case "${1:-}" in
         echo "  dictation install      Re-run model setup"
         echo "  dictation autostart    Launch on login"
         echo "  dictation autostart --remove   Stop launching on login"
+        echo "  dictation uninstall    Remove Wisper Genie from your system"
         echo "  dictation --help       Show this help"
         ;;
     *)

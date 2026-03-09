@@ -55,6 +55,7 @@ dictation --help       # Show all commands
 dictation install      # Re-download models if needed
 dictation autostart    # Launch on login
 dictation autostart --remove  # Stop launching on login
+dictation uninstall    # Remove Wisper Genie completely
 ```
 
 **Dictating:**
@@ -253,9 +254,15 @@ Note: `test_asr.py` and `test_injector.py` require native macOS dependencies (`p
 - Run `source ~/.zshrc` or open a new terminal
 - Verify: `ls ~/.local/bin/dictation`
 
+**Uninstall**
+```bash
+dictation uninstall
+```
+This removes `~/.wisper-genie/`, the `dictation` command, and the autostart plist. Ollama and its models are left in place (shared system tool). To remove those too: `brew uninstall --cask ollama && ollama rm qwen3.5:2b`.
+
 **Reinstall from scratch**
 ```bash
-rm -rf ~/.wisper-genie ~/.local/bin/dictation
+dictation uninstall
 curl -fsSL https://raw.githubusercontent.com/glp942001/wisper-genie/main/install.sh | bash
 ```
 
