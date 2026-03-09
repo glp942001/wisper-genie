@@ -25,7 +25,7 @@ WHISPER_MODEL_FILE="$MODEL_DIR/ggml-small.bin"
 OLLAMA_MODEL="qwen3.5:2b"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=12
-TOTAL_STEPS=11
+TOTAL_STEPS=12
 
 # ---------------------------------------------------------------------------
 # Colors & helpers
@@ -466,6 +466,128 @@ else
     read -r < /dev/tty 2>/dev/null || true
 fi
 ok "Microphone — done"
+
+# ===========================================================================
+# Step 12: Test hotkey
+# ===========================================================================
+_step=$(( _step + 1 ))
+printf "\n${BLUE}${BOLD}[%d/%d]${RESET} %s\n" "$_step" "$TOTAL_STEPS" "Testing your hotkey..."
+
+printf "\n"
+printf "  Let's make sure your hotkey works.\n"
+printf "  Press and release the ${BOLD}Right Option key${RESET} now...\n"
+printf "\n"
+
+# Use a small Python script to test key detection
+"$VENV_DIR/bin/python" -c "
+import sys, time
+from pynput import keyboard
+
+_ALT_VARIANTS = {'alt_r', 'alt_gr', 'alt_l', 'alt'}
+detected = [False]
+key_name = [None]
+
+def on_press(key):
+    name = getattr(key, 'name', None)
+    if name and name in _ALT_VARIANTS:
+        detected[0] = True
+        key_name[0] = name
+        return False  # stop listener
+
+listener = keyboard.Listener(on_press=on_press)
+listener.start()
+
+# Wait up to 10 seconds
+for i in range(100):
+    time.sleep(0.1)
+    if detected[0]:
+        break
+
+listener.stop()
+
+if detected[0]:
+    print(f'DETECTED:{key_name[0]}')
+else:
+    print('TIMEOUT')
+" 2>/dev/null
+HOTKEY_RESULT=$?
+
+# Read the output
+HOTKEY_OUTPUT=$("$VENV_DIR/bin/python" -c "
+import sys, time
+from pynput import keyboard
+
+_ALT_VARIANTS = {'alt_r', 'alt_gr', 'alt_l', 'alt'}
+detected = [False]
+key_name = [None]
+
+def on_press(key):
+    name = getattr(key, 'name', None)
+    if name and name in _ALT_VARIANTS:
+        detected[0] = True
+        key_name[0] = name
+        return False
+
+listener = keyboard.Listener(on_press=on_press)
+listener.start()
+for i in range(100):
+    time.sleep(0.1)
+    if detected[0]:
+        break
+listener.stop()
+if detected[0]:
+    print(f'DETECTED:{key_name[0]}')
+else:
+    print('TIMEOUT')
+" 2>/dev/null)
+
+if [[ "$HOTKEY_OUTPUT" == DETECTED:* ]]; then
+    DETECTED_KEY="${HOTKEY_OUTPUT#DETECTED:}"
+    ok "Right Option key detected (reported as: $DETECTED_KEY)"
+else
+    warn "Right Option key not detected within 10 seconds."
+    printf "\n"
+    printf "  You can choose an alternative hotkey:\n"
+    printf "\n"
+    printf "    ${BOLD}1)${RESET} Right Option key  (default)\n"
+    printf "    ${BOLD}2)${RESET} Right Command key\n"
+    printf "    ${BOLD}3)${RESET} Right Shift key\n"
+    printf "    ${BOLD}4)${RESET} Right Control key\n"
+    printf "    ${BOLD}5)${RESET} F18 key\n"
+    printf "    ${BOLD}6)${RESET} Keep current setting\n"
+    printf "\n"
+    printf "  Choose [1-6]: "
+
+    if [[ -t 0 ]]; then
+        read -r choice
+    else
+        read -r choice < /dev/tty 2>/dev/null || choice="6"
+    fi
+
+    CONFIG_FILE="$INSTALL_DIR/config/default.toml"
+    case "${choice:-6}" in
+        1) ;; # keep default
+        2)
+            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<cmd_r>"]/' "$CONFIG_FILE"
+            ok "Hotkey set to Right Command key"
+            ;;
+        3)
+            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<shift_r>"]/' "$CONFIG_FILE"
+            ok "Hotkey set to Right Shift key"
+            ;;
+        4)
+            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<ctrl_r>"]/' "$CONFIG_FILE"
+            ok "Hotkey set to Right Control key"
+            ;;
+        5)
+            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<f18>"]/' "$CONFIG_FILE"
+            ok "Hotkey set to F18 key"
+            ;;
+        *)
+            info "Keeping Right Option key. You can change it later in config/default.toml."
+            ;;
+    esac
+fi
 
 # ===========================================================================
 # Done!

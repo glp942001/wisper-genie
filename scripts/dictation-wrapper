@@ -32,6 +32,7 @@ case "${1:-}" in
         echo ""
         echo "Usage:"
         echo "  wisper-genie              Start dictating (hold Right Option to speak)"
+        echo "  wisper-genie --verbose    Start with debug output"
         echo "  wisper-genie install      Re-run model setup"
         echo "  wisper-genie autostart    Launch on login"
         echo "  wisper-genie autostart --remove   Stop launching on login"

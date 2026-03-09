@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import os
 import sys
 import threading
 import time
@@ -17,6 +19,27 @@ else:
         import tomllib
     except ImportError:
         import tomli as tomllib  # type: ignore[no-redef]
+
+# --- Verbose flag ---
+VERBOSE = "--verbose" in sys.argv or "--debug" in sys.argv or "-v" in sys.argv
+
+
+def _log(msg: str) -> None:
+    """Print only in verbose mode."""
+    if VERBOSE:
+        print(msg)
+
+
+def _progress(step: str, done: bool = False) -> None:
+    """Print a compact progress line."""
+    if done:
+        print(f"  ✔ {step}")
+    else:
+        print(f"  ⏳ {step}...", end="", flush=True)
+
+
+def _progress_done() -> None:
+    print(" ✔")
 
 
 def load_config(path: Path | None = None) -> dict:
@@ -47,6 +70,64 @@ def main() -> None:
     project_root = Path(__file__).resolve().parents[2]
     model_path = project_root / cfg["asr"]["model_path"]
 
+    # Suppress whisper.cpp verbose output unless --verbose
+    if not VERBOSE:
+        # Redirect C-level stderr during model load to suppress whisper logs
+        _stderr_fd = os.dup(2)
+        _devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(_devnull, 2)
+
+    # --- Startup banner ---
+    print()
+    print("  🧞 Wisper Genie")
+    print("  ─────────────────────")
+    print()
+
+    # --- Initialize components ---
+    _progress("Loading speech model")
+    asr = WhisperCppAdapter(
+        model_path=model_path,
+        language=cfg["asr"]["language"],
+    )
+    asr.load()
+    asr.transcribe(np.zeros(16000, dtype=np.int16))
+    _progress_done()
+
+    _progress("Initializing microphone")
+    mic = MicCapture(
+        sample_rate=cfg["audio"]["sample_rate"],
+        channels=cfg["audio"]["channels"],
+        frame_duration_ms=cfg["vad"]["frame_size_ms"],
+        device=cfg["audio"].get("device"),
+        dtype=cfg["audio"]["dtype"],
+    )
+    mic.start()
+    time.sleep(0.1)
+    mic.stop()
+    _progress_done()
+
+    _progress("Loading dictionary")
+    transcript_buf = TranscriptBuffer()
+    dictionary = load_dictionary()
+    _progress_done()
+
+    _progress("Warming up AI cleanup")
+    cleanup = OllamaCleanup(
+        model=cfg["cleanup"]["model"],
+        base_url=cfg["cleanup"]["base_url"],
+        timeout_ms=cfg["cleanup"]["timeout_ms"],
+    )
+    warmup_ok = cleanup.warmup()
+    _progress_done()
+    if not warmup_ok:
+        print("  ⚠ Cleanup LLM unavailable — dictation works but without AI formatting.")
+
+    # Restore stderr if we suppressed it
+    if not VERBOSE:
+        os.dup2(_stderr_fd, 2)
+        os.close(_devnull)
+        os.close(_stderr_fd)
+
     # Pre-load audio cues
     sound_start = AppKit.NSSound.alloc().initWithContentsOfFile_byReference_(
         "/System/Library/Sounds/Purr.aiff", True
@@ -64,56 +145,6 @@ def main() -> None:
             sound.stop()
             sound.play()
         threading.Thread(target=_play, daemon=True).start()
-
-    print("=== Dictation Pipeline ===")
-    print(f"Hotkey: {' + '.join(cfg['hotkey']['keys'])}")
-    print()
-
-    # --- Initialize components ---
-    print("Loading ASR model...")
-    asr = WhisperCppAdapter(
-        model_path=model_path,
-        language=cfg["asr"]["language"],
-    )
-    asr.load()
-    # Warmup: dummy transcription to eliminate cold-start GPU penalty
-    asr.transcribe(np.zeros(16000, dtype=np.int16))
-    print("ASR model loaded and warm.")
-
-    mic = MicCapture(
-        sample_rate=cfg["audio"]["sample_rate"],
-        channels=cfg["audio"]["channels"],
-        frame_duration_ms=cfg["vad"]["frame_size_ms"],
-        device=cfg["audio"].get("device"),
-        dtype=cfg["audio"]["dtype"],
-    )
-    # Warmup mic: open/close stream once to initialize CoreAudio.
-    # Without this, the first recording often fails or is delayed.
-    mic.start()
-    time.sleep(0.1)
-    mic.stop()
-
-    transcript_buf = TranscriptBuffer()
-
-    # Load personal dictionary
-    dictionary = load_dictionary()
-    if dictionary["terms"]:
-        print(f"Personal dictionary: {len(dictionary['terms'])} terms loaded.")
-    else:
-        print("No personal dictionary found. Add terms to config/dictionary.toml.")
-
-    cleanup = OllamaCleanup(
-        model=cfg["cleanup"]["model"],
-        base_url=cfg["cleanup"]["base_url"],
-        timeout_ms=cfg["cleanup"]["timeout_ms"],
-    )
-
-    print("Warming up cleanup LLM...")
-    warmup_ok = cleanup.warmup()
-    if warmup_ok:
-        print("Cleanup LLM warm.")
-    else:
-        print("WARNING: Cleanup LLM unavailable. Dictation will work but without text cleanup.")
 
     injector = ClipboardInjector(
         paste_delay_ms=cfg["output"]["paste_delay_ms"],
@@ -134,9 +165,7 @@ def main() -> None:
     recording = False
     recorded_frames: list[np.ndarray] = []
     utterance_id = 0
-    # Event signals capture_loop to wake up when recording starts/stops
     recording_event = threading.Event()
-    # Shutdown signal
     shutdown_event = threading.Event()
 
     def process_utterance(frames: list[np.ndarray], uid: int) -> None:
@@ -149,35 +178,29 @@ def main() -> None:
 
             # Smart trim: only remove the first 300ms if it contains
             # the push-to-talk start sound (high energy burst).
-            # If the beginning is quiet (speech or silence), keep it.
-            trim_samples = int(0.3 * cfg["audio"]["sample_rate"])  # 4800 @ 16kHz
+            trim_samples = int(0.3 * cfg["audio"]["sample_rate"])
             if len(audio) > trim_samples * 2:
                 head_energy = np.abs(audio[:trim_samples].astype(np.float32)).mean()
                 body_energy = np.abs(audio[trim_samples:trim_samples * 3].astype(np.float32)).mean()
-                # Trim only if the head is significantly louder than the body
-                # (i.e., a sound effect burst, not normal speech)
                 if head_energy > body_energy * 2.5 and head_energy > 500:
                     audio = audio[trim_samples:]
 
             # Audio preprocessing: noise gate + gain normalization
             audio_f = audio.astype(np.float32)
-            # Noise gate: zero out samples below a threshold to remove background hiss
             noise_floor = np.percentile(np.abs(audio_f), 10)
             gate_threshold = max(noise_floor * 3, 50.0)
             audio_f[np.abs(audio_f) < gate_threshold] = 0.0
-            # Gain normalization: scale audio to use more of the int16 range
             peak = np.max(np.abs(audio_f))
             if peak > 0:
-                target_peak = 28000.0  # ~85% of int16 max, avoid clipping
+                target_peak = 28000.0
                 audio_f = audio_f * (target_peak / peak)
             audio = audio_f.clip(-32767, 32767).astype(np.int16)
 
             duration_s = len(audio) / cfg["audio"]["sample_rate"]
-            print(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")
+            _log(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")
 
             latency.start_pipeline()
 
-            # Whisper initial prompt: dictionary terms bias the decoder
             whisper_prompt = dictionary["whisper_hint"] if dictionary["whisper_hint"] else None
 
             # ASR
@@ -185,35 +208,35 @@ def main() -> None:
                 raw_text = asr.transcribe(audio, initial_prompt=whisper_prompt)
 
             if not raw_text.strip():
-                print("[Pipeline] No speech detected.")
+                _log("[Pipeline] No speech detected.")
                 return
 
-            print(f"[ASR] Raw: {raw_text}")
+            _log(f"[ASR] Raw: {raw_text}")
 
-            # Early cancellation check — don't waste LLM call if stale
+            # Early cancellation check
             with lock:
                 if uid != utterance_id:
-                    print("[Pipeline] Cancelled after ASR — new recording started.")
+                    _log("[Pipeline] Cancelled — new recording started.")
                     return
 
-            # Transcript normalization (fillers, dictation commands)
+            # Transcript normalization
             with latency.track("normalize"):
                 normalized, has_backtrack = transcript_buf.add(raw_text)
 
             if not normalized:
-                print("[Pipeline] Empty after normalization.")
+                _log("[Pipeline] Empty after normalization.")
                 return
 
-            print(f"[Normalize] {normalized}" + (" [BACKTRACK]" if has_backtrack else ""))
+            _log(f"[Normalize] {normalized}" + (" [BACKTRACK]" if has_backtrack else ""))
 
-            # Check for voice commands (delete that, undo, etc.)
+            # Check for voice commands
             cmd = detect_command(normalized)
             if cmd is not None:
-                print(f"[Command] Detected: {cmd.action}")
+                _log(f"[Command] Detected: {cmd.action}")
                 with latency.track("command"):
                     execute_command(cmd)
                 total = latency.finish_pipeline()
-                print(f"[Pipeline] Command executed in {total:.0f}ms")
+                _log(f"[Pipeline] Command executed in {total:.0f}ms")
                 return
 
             cleanup_context = {
@@ -225,12 +248,12 @@ def main() -> None:
             with latency.track("cleanup"):
                 cleaned = cleanup.cleanup(normalized, context=cleanup_context)
 
-            print(f"[Cleanup] {cleaned}")
+            _log(f"[Cleanup] {cleaned}")
 
-            # Final cancellation check before injecting
+            # Final cancellation check
             with lock:
                 if uid != utterance_id:
-                    print("[Pipeline] Cancelled before injection — new recording started.")
+                    _log("[Pipeline] Cancelled before injection.")
                     return
 
             # Injection
@@ -238,15 +261,15 @@ def main() -> None:
                 injector.inject(cleaned)
 
             total = latency.finish_pipeline()
-            print(latency.summary())
-            print(f"[Pipeline] Done in {total:.0f}ms")
+            if VERBOSE:
+                print(latency.summary())
+            _log(f"[Pipeline] Done in {total:.0f}ms")
 
         except Exception as exc:
             print(f"[Pipeline] ERROR: {type(exc).__name__}: {exc}")
 
     # --- Hotkey handler (push-to-talk) ---
     hotkey_keys = set()
-    # Map of alt key variants — macOS reports Right Option inconsistently
     _ALT_VARIANTS = {"alt_r", "alt_gr", "alt_l", "alt"}
     for k in cfg["hotkey"]["keys"]:
         key_name = k.strip("<>")
@@ -256,17 +279,16 @@ def main() -> None:
             try:
                 hotkey_keys.add(keyboard.KeyCode.from_char(k))
             except Exception:
-                print(f"WARNING: Could not parse hotkey '{k}', skipping.")
+                print(f"  ⚠ Could not parse hotkey '{k}', skipping.")
 
     if not hotkey_keys:
-        print("ERROR: No valid hotkey configured. Check [hotkey] keys in config/default.toml.")
+        print("  ✘ No valid hotkey configured.")
         sys.exit(1)
 
     def _is_hotkey_match(pressed: set) -> bool:
         """Check if hotkey is pressed, accounting for alt key variants."""
         if hotkey_keys.issubset(pressed):
             return True
-        # Also check if any alt variant matches any configured alt key
         pressed_names = set()
         for k in pressed:
             if hasattr(k, 'name'):
@@ -275,7 +297,6 @@ def main() -> None:
         for k in hotkey_keys:
             if hasattr(k, 'name'):
                 configured_names.add(k.name)
-        # If configured key is an alt variant, accept any alt variant
         for cfg_name in configured_names:
             if cfg_name in _ALT_VARIANTS:
                 if pressed_names & _ALT_VARIANTS:
@@ -298,7 +319,7 @@ def main() -> None:
         play_sound(sound_start)
         mic.start()
         recording_event.set()
-        print("\n[Recording] Started — speak now...")
+        _log("\n[Recording] Started — speak now...")
 
     def on_release(key: keyboard.Key | keyboard.KeyCode) -> None:
         nonlocal recording, recorded_frames
@@ -315,20 +336,17 @@ def main() -> None:
         mic.stop()
         recording_event.clear()
         play_sound(sound_stop)
-        print("[Recording] Stopped")
+        _log("[Recording] Stopped")
         threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
 
-    # --- Audio capture loop (event-driven) ---
+    # --- Audio capture loop ---
     def capture_loop() -> None:
-        """Continuously read mic frames when recording."""
         nonlocal recording
         consecutive_errors = 0
         while not shutdown_event.is_set():
-            # Wait for recording to start (or shutdown)
             recording_event.wait(timeout=0.1)
             if shutdown_event.is_set():
                 break
-
             try:
                 with lock:
                     is_rec = recording
@@ -336,27 +354,32 @@ def main() -> None:
                     frame = mic.read(timeout=0.05)
                     if frame is not None:
                         with lock:
-                            if recording:  # Double-check still recording
+                            if recording:
                                 recorded_frames.append(frame)
                         consecutive_errors = 0
             except Exception as exc:
                 consecutive_errors += 1
-                print(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
+                _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
                 with lock:
                     if recording:
                         recording = False
                         recording_event.clear()
                 play_sound(sound_error)
-                print("[Capture] Recording lost — mic error. Release and try again.")
+                print("  ⚠ Mic error — release key and try again.")
                 if consecutive_errors >= 3:
-                    print("[Capture] Multiple consecutive errors. Check microphone connection.")
+                    print("  ⚠ Multiple mic errors. Check connection.")
                     consecutive_errors = 0
 
     capture_thread = threading.Thread(target=capture_loop, daemon=True)
     capture_thread.start()
 
-    # --- Start ---
-    print("\nReady! Hold the hotkey to dictate. Press Ctrl+C to quit.")
+    # --- Ready ---
+    print()
+    print("  ✔ Ready!")
+    print()
+    print("  Hold Right Option key to dictate. Ctrl+C to quit.")
+    print()
+
     with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
         try:
             listener.join()
@@ -364,14 +387,14 @@ def main() -> None:
             pass
 
     # --- Shutdown ---
-    print("\nShutting down...")
+    print("\n  Shutting down...")
     shutdown_event.set()
-    recording_event.set()  # Wake capture loop so it can exit
+    recording_event.set()
     mic.stop()
     cleanup.close()
     asr.unload()
     capture_thread.join(timeout=2)
-    print("Bye.")
+    print("  Bye.")
 
 
 if __name__ == "__main__":
