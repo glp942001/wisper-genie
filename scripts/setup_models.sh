@@ -16,16 +16,16 @@ MODEL_FILE="$MODELS_DIR/ggml-small.bin"
 if [ -f "$MODEL_FILE" ]; then
     echo "Model already exists at $MODEL_FILE, skipping download."
 else
-    echo "Downloading ggml-small.bin (~1.6GB)..."
+    echo "Downloading ggml-small.bin (~465MB)..."
     curl -L --progress-bar \
         "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin" \
         -o "$MODEL_FILE"
     echo "Downloaded to $MODEL_FILE"
 fi
 
-# 2. Pull Ollama ministral:3b
+# 2. Pull Ollama qwen3.5:2b
 echo ""
-echo "--- Pulling Ollama ministral:3b model ---"
+echo "--- Pulling Ollama qwen3.5:2b model ---"
 if command -v ollama &> /dev/null; then
     ollama pull qwen3.5:2b
     echo "Ollama qwen3.5:2b ready."

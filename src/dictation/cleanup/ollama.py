@@ -20,7 +20,7 @@ class OllamaCleanup:
 
     def __init__(
         self,
-        model: str = "ministral-3:3b",
+        model: str = "qwen3.5:2b",
         base_url: str = "http://localhost:11434",
         timeout_ms: int = 10000,
     ) -> None:

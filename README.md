@@ -22,7 +22,7 @@ Everything runs locally on your Mac. No audio leaves your machine.
 ## Requirements
 
 - macOS 13+ (Apple Silicon or Intel)
-- ~4 GB disk space (models)
+- ~3 GB disk space (models)
 - ~2 GB RAM (during dictation)
 
 The installer handles everything else (Homebrew, Python, Ollama, models).
@@ -41,8 +41,8 @@ The installer will:
 4. Create a Python virtual environment and install dependencies
 5. Install the `dictation` command to `~/.local/bin/`
 6. Prompt to install Ollama (local LLM runtime)
-7. Download the Whisper large-v3-turbo model (~1.5 GB)
-8. Pull the ministral-3:3b cleanup model (~2 GB)
+7. Download the Whisper small model (~465 MB)
+8. Pull the qwen3.5:2b cleanup model (~2.7 GB)
 9. Open macOS Accessibility and Microphone permission settings
 
 After installation, open a new terminal (or run `source ~/.zshrc`) and you're ready.
@@ -88,11 +88,11 @@ dictation autostart --remove  # Stop launching on login
 ## Architecture
 
 ```
-Audio → ASR (Whisper large-v3-turbo, with initial_prompt from dictionary + context)
+Audio → ASR (Whisper small, with initial_prompt from dictionary + context)
   → Normalize (filler removal, dictation commands, backtrack detection)
   → Voice command check (routes commands to handler, skips LLM)
   → Screen context capture (active app name + text field content via AX APIs)
-  → LLM cleanup (Ollama ministral-3:3b, with full context: app, field, history, dictionary)
+  → LLM cleanup (Ollama qwen3.5:2b, with full context: app, field, history, dictionary)
   → Text injection (NSPasteboard + CGEvent Cmd+V)
 ```
 
@@ -122,11 +122,11 @@ Audio → ASR (Whisper large-v3-turbo, with initial_prompt from dictionary + con
 device = "auto"          # "auto" prefers AirPods/external, "default" for system default
 
 [asr]
-model_path = "models/ggml-large-v3-turbo.bin"
+model_path = "models/ggml-small.bin"
 language = "en"
 
 [cleanup]
-model = "ministral-3:3b"
+model = "qwen3.5:2b"
 timeout_ms = 10000       # Fail-open: raw text used if LLM is slow/down
 
 [hotkey]
@@ -246,8 +246,8 @@ Note: `test_asr.py` and `test_injector.py` require native macOS dependencies (`p
 
 **Ollama errors / "Fail-open" messages**
 - Make sure Ollama is running: `ollama serve` or open Ollama.app
-- Check the model is pulled: `ollama list` should show `ministral-3:3b`
-- Re-pull if needed: `ollama pull ministral-3:3b`
+- Check the model is pulled: `ollama list` should show `qwen3.5:2b`
+- Re-pull if needed: `ollama pull qwen3.5:2b`
 
 **"command not found: dictation"**
 - Run `source ~/.zshrc` or open a new terminal
@@ -264,7 +264,7 @@ curl -fsSL https://raw.githubusercontent.com/glp942001/wisper-genie/main/install
 | Component | Technology |
 |---|---|
 | Speech-to-text | [whisper.cpp](https://github.com/ggerganov/whisper.cpp) via pywhispercpp (Metal GPU) |
-| LLM cleanup | [Ollama](https://ollama.com) with ministral-3:3b |
+| LLM cleanup | [Ollama](https://ollama.com) with qwen3.5:2b |
 | Audio capture | [sounddevice](https://python-sounddevice.readthedocs.io/) (PortAudio) |
 | Hotkey listener | [pynput](https://pynput.readthedocs.io/) |
 | Text injection | Native macOS APIs (NSPasteboard + Quartz CGEvent) |
