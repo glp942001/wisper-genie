@@ -104,6 +104,11 @@ FEW_SHOT_EXAMPLES: list[tuple[str, str]] = [
         "lets meet at two actually three oclock",
         "Let's meet at 3 o'clock.",
     ),
+    # Request/command — format it, do NOT execute or respond
+    (
+        "look for AWS lambda documentation",
+        "Look for AWS Lambda documentation.",
+    ),
 ]
 
 

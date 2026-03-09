@@ -102,6 +102,7 @@ class OllamaCleanup:
                 "note:", "sorry", "provided in the input",
                 "no content", "no speech", "no audio",
                 "the input", "the transcript", "empty",
+                "unavailable", "not found", "does not exist",
             ]
             cleaned_lower = cleaned.lower()
             if any(sig in cleaned_lower for sig in commentary_signals):
