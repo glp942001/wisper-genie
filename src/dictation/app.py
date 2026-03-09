@@ -318,8 +318,6 @@ def main() -> None:
 
         play_sound(sound_start)
         mic.start()
-        # Brief stabilization delay — without this, the first few frames
-        # from a freshly opened stream are often silence/garbage on macOS.
         time.sleep(0.05)
         recording_event.set()
         _log("\n[Recording] Started — speak now...")
@@ -329,9 +327,18 @@ def main() -> None:
 
         with lock:
             pressed_keys.discard(key)
-            if not recording or _is_hotkey_match(pressed_keys):
+            # Also discard all alt variants — macOS reports modifier keys
+            # inconsistently (press=alt_r, release=alt), leaving phantom keys.
+            if hasattr(key, 'name') and key.name in _ALT_VARIANTS:
+                pressed_keys.difference_update({
+                    k for k in list(pressed_keys)
+                    if hasattr(k, 'name') and k.name in _ALT_VARIANTS
+                })
+            if not recording:
                 return
+            # Stop recording — clear pressed_keys to prevent any phantom buildup
             recording = False
+            pressed_keys.clear()
             frames = list(recorded_frames)
             recorded_frames = []
             uid = utterance_id
