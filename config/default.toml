@@ -1,0 +1,46 @@
+[audio]
+sample_rate = 16000
+channels = 1
+dtype = "int16"
+# "auto" = prefer AirPods/external mic over built-in; "default" = system default
+device = "auto"
+# Frame size in ms for audio capture
+frame_size_ms = 30
+
+[vad]
+# Silero VAD parameters (reserved for future use)
+threshold = 0.5
+# Minimum silence duration (ms) to confirm endpoint
+silence_duration_ms = 300
+# Frame size in ms (Silero expects 30ms)
+frame_size_ms = 30
+
+[asr]
+backend = "whisper_cpp"
+# Path is relative to project root; setup_models.sh downloads here
+model_path = "models/ggml-medium.bin"
+language = "en"
+
+[cleanup]
+backend = "ollama"
+model = "ministral-3:3b"
+base_url = "http://localhost:11434"
+# Timeout in ms; if exceeded, return raw transcript (fail-open)
+# First request may be slow due to Ollama cold start
+timeout_ms = 10000
+
+[output]
+backend = "clipboard_paste"
+# Delay in ms between clipboard set and paste keystroke
+paste_delay_ms = 50
+
+[hotkey]
+# Push-to-talk key (right Option key)
+keys = ["<alt_r>"]
+
+[latency]
+# Per-stage budgets in ms (for warnings)
+asr_budget_ms = 250
+cleanup_budget_ms = 350
+injection_budget_ms = 50
+total_budget_ms = 800

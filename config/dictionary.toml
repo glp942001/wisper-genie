@@ -1,0 +1,24 @@
+# Personal Dictionary — custom vocabulary for better transcription accuracy.
+# Add names, jargon, acronyms, and technical terms the ASR and LLM should know.
+#
+# These terms are:
+#   1. Injected into the LLM prompt so it spells them correctly
+#   2. Fed to Whisper as context to improve recognition accuracy
+#
+# Uncomment and add your own terms below.
+
+# Proper names (people, places, brands)
+names = [
+    # "Supabase",
+    # "Vercel",
+]
+
+# Technical terms, acronyms, jargon
+terms = [
+    "API", "JSON", "AWS", "OAuth",
+    "Kubernetes", "kubectl", "Docker",
+    "PostgreSQL", "Redis", "FastAPI",
+]
+
+# Abbreviations and their expansions (for future use)
+# abbreviations = { "k8s" = "Kubernetes", "tf" = "Terraform" }

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Wisper Genie — dictation tool wrapper
+# This script is copied to ~/.local/bin/dictation by the installer.
+set -euo pipefail
+
+GENIE_HOME="$HOME/.wisper-genie"
+VENV="$GENIE_HOME/.venv"
+
+if [ ! -d "$VENV" ]; then
+    echo "Wisper Genie not installed. Run the installer first."
+    echo "curl -fsSL https://raw.githubusercontent.com/glp942001/wisper-genie/main/install.sh | bash"
+    exit 1
+fi
+
+# Activate venv
+# shellcheck disable=SC1091
+source "$VENV/bin/activate"
+
+# Route subcommands
+case "${1:-}" in
+    install)
+        bash "$GENIE_HOME/scripts/setup_models.sh"
+        ;;
+    autostart)
+        python -m dictation.cli autostart "${@:2}"
+        ;;
+    --help|-h)
+        echo "Wisper Genie — AI dictation tool"
+        echo ""
+        echo "Usage:"
+        echo "  dictation              Start dictating (hold Right Option to speak)"
+        echo "  dictation install      Re-run model setup"
+        echo "  dictation autostart    Launch on login"
+        echo "  dictation autostart --remove   Stop launching on login"
+        echo "  dictation --help       Show this help"
+        ;;
+    *)
+        python -m dictation.app "$@"
+        ;;
+esac
