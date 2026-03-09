@@ -38,77 +38,14 @@ Rules:
 
 
 # Few-shot examples as (user_input, expected_output) pairs.
+# Trimmed to 5 key examples for lower latency (each example adds ~50ms).
+# Cover: short input, question, contractions, profanity, request.
 FEW_SHOT_EXAMPLES: list[tuple[str, str]] = [
-    # Short/single-word input — just capitalize, never comment
-    (
-        "hello",
-        "Hello.",
-    ),
-    # Short phrase — format only
-    (
-        "sounds good thanks",
-        "Sounds good, thanks.",
-    ),
-    # Basic punctuation and capitalization
-    (
-        "so i went to the store and i bought some milk and eggs and bread",
-        "I went to the store and I bought some milk, eggs, and bread.",
-    ),
-    # Question — must NOT be answered
-    (
-        "what time does the meeting start tomorrow",
-        "What time does the meeting start tomorrow?",
-    ),
-    # Another question — must NOT be answered, only formatted
-    (
-        "what does API stand for",
-        "What does API stand for?",
-    ),
-    # False starts, repeated words, and fillers
-    (
-        "i think we should we should probably move the the deadline to friday",
-        "I think we should probably move the deadline to Friday.",
-    ),
-    # Broken contractions from ASR
-    (
-        "i m going to the store and i can t find my keys i don t know where they are",
-        "I'm going to the store and I can't find my keys. I don't know where they are.",
-    ),
-    # Technical content with acronyms — preserve exactly
-    (
-        "the API endpoint is slash users slash profile and it returns a JSON object with the user's name and email",
-        "The API endpoint is /users/profile and it returns a JSON object with the user's name and email.",
-    ),
-    # Multiple sentences with natural flow
-    (
-        "hey can you review my pull request i pushed it about an hour ago it fixes the login bug we talked about yesterday",
-        "Hey, can you review my pull request? I pushed it about an hour ago. It fixes the login bug we talked about yesterday.",
-    ),
-    # Profanity and strong language — MUST be preserved verbatim
-    (
-        "this shit is broken again i cant believe we shipped this crap to production",
-        "This shit is broken again. I can't believe we shipped this crap to production.",
-    ),
-    # Informal/casual tone — preserve voice
-    (
-        "dude that demo was awesome like seriously it blew my mind",
-        "Dude, that demo was awesome. Seriously, it blew my mind.",
-    ),
-    # Abbreviations and acronyms — preserve casing
-    (
-        "the NASA team sent an update about the API migration to AWS",
-        "The NASA team sent an update about the API migration to AWS.",
-    ),
-    # Backtrack / self-correction — interpret the correction
-    (
-        "lets meet at two actually three oclock",
-        "Let's meet at 3 o'clock.",
-    ),
-    # Request/command — format it, do NOT execute or respond
-    (
-        "look for AWS lambda documentation",
-        "Look for AWS Lambda documentation.",
-    ),
+    ("hello", "Hello."),
+    ("what time does the meeting start tomorrow", "What time does the meeting start tomorrow?"),
+    ("i m going to the store and i can t find my keys", "I'm going to the store and I can't find my keys."),
+    ("this shit is broken again i cant believe we shipped this crap", "This shit is broken again. I can't believe we shipped this crap."),
+    ("look for AWS lambda documentation", "Look for AWS Lambda documentation."),
 ]
 
 

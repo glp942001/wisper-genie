@@ -70,7 +70,7 @@ class OllamaCleanup:
                     "stream": False,
                     "keep_alive": "10m",
                     "options": {
-                        "num_predict": 256,
+                        "num_predict": 128,
                         "temperature": 0.0,
                     },
                     "think": False,

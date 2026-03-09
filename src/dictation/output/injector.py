@@ -27,7 +27,7 @@ class ClipboardInjector:
             self._set_clipboard(text)
             time.sleep(self._paste_delay)
             self._paste()
-            time.sleep(0.05)
+            time.sleep(0.01)
         finally:
             # Always clear clipboard — even on exception — to prevent leaking
             # sensitive dictated text into the system clipboard.

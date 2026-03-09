@@ -33,7 +33,7 @@ class WhisperCppAdapter:
         self,
         model_path: str | Path,
         language: str = "en",
-        n_threads: int = 4,
+        n_threads: int = 8,
     ) -> None:
         self._model_path = Path(model_path)
         self._language = language

@@ -19,8 +19,7 @@ frame_size_ms = 30
 backend = "whisper_cpp"
 # Path is relative to project root; setup_models.sh downloads here
 model_path = "models/ggml-small.bin"
-# Empty string = auto-detect (better for accented English)
-language = ""
+language = "en"
 
 [cleanup]
 backend = "ollama"
@@ -33,7 +32,7 @@ timeout_ms = 10000
 [output]
 backend = "clipboard_paste"
 # Delay in ms between clipboard set and paste keystroke
-paste_delay_ms = 50
+paste_delay_ms = 10
 
 [hotkey]
 # Push-to-talk key (right Option key)

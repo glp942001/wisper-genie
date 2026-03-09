@@ -76,7 +76,9 @@ def main() -> None:
         language=cfg["asr"]["language"],
     )
     asr.load()
-    print("ASR model loaded.")
+    # Warmup: dummy transcription to eliminate cold-start GPU penalty
+    asr.transcribe(np.zeros(16000, dtype=np.int16))
+    print("ASR model loaded and warm.")
 
     mic = MicCapture(
         sample_rate=cfg["audio"]["sample_rate"],
