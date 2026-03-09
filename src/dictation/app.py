@@ -101,6 +101,12 @@ def main() -> None:
         device=cfg["audio"].get("device"),
         dtype=cfg["audio"]["dtype"],
     )
+    # Warmup mic: open stream, let CoreAudio fully initialize, then close.
+    # First stream open on macOS triggers driver init (~300ms).
+    mic.start()
+    time.sleep(0.3)
+    mic.stop()
+    # Second warmup to ensure the re-open path is also primed.
     mic.start()
     time.sleep(0.1)
     mic.stop()
@@ -172,6 +178,7 @@ def main() -> None:
         """Process recorded audio through the full pipeline."""
         try:
             if not frames:
+                print("  ⚠ No audio captured. Try holding the key a bit longer.")
                 return
 
             audio = np.concatenate(frames).ravel()
@@ -208,7 +215,7 @@ def main() -> None:
                 raw_text = asr.transcribe(audio, initial_prompt=whisper_prompt)
 
             if not raw_text.strip():
-                _log("[Pipeline] No speech detected.")
+                print("  ⚠ No speech detected. Make sure your mic is working.")
                 return
 
             _log(f"[ASR] Raw: {raw_text}")
@@ -224,7 +231,7 @@ def main() -> None:
                 normalized, has_backtrack = transcript_buf.add(raw_text)
 
             if not normalized:
-                _log("[Pipeline] Empty after normalization.")
+                print("  ⚠ Nothing to transcribe.")
                 return
 
             _log(f"[Normalize] {normalized}" + (" [BACKTRACK]" if has_backtrack else ""))
@@ -263,7 +270,9 @@ def main() -> None:
             total = latency.finish_pipeline()
             if VERBOSE:
                 print(latency.summary())
-            _log(f"[Pipeline] Done in {total:.0f}ms")
+                _log(f"[Pipeline] Done in {total:.0f}ms")
+            else:
+                print(f"  ✔ \"{cleaned}\" ({total:.0f}ms)")
 
         except Exception as exc:
             print(f"[Pipeline] ERROR: {type(exc).__name__}: {exc}")
@@ -320,7 +329,7 @@ def main() -> None:
         mic.start()
         time.sleep(0.05)
         recording_event.set()
-        _log("\n[Recording] Started — speak now...")
+        print("  🎙️  Recording...")
 
     def on_release(key: keyboard.Key | keyboard.KeyCode) -> None:
         nonlocal recording, recorded_frames
@@ -346,7 +355,7 @@ def main() -> None:
         mic.stop()
         recording_event.clear()
         play_sound(sound_stop)
-        _log("[Recording] Stopped")
+        print("  ⏳ Processing...")
         threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
 
     # --- Audio capture loop ---
