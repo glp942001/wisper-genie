@@ -141,11 +141,17 @@ def main() -> None:
 
             audio = np.concatenate(frames).ravel()
 
-            # Trim first 300ms — the push-to-talk start sound bleeds into
-            # the mic and Whisper transcribes it as "(air whooshing)" etc.
+            # Smart trim: only remove the first 300ms if it contains
+            # the push-to-talk start sound (high energy burst).
+            # If the beginning is quiet (speech or silence), keep it.
             trim_samples = int(0.3 * cfg["audio"]["sample_rate"])  # 4800 @ 16kHz
             if len(audio) > trim_samples * 2:
-                audio = audio[trim_samples:]
+                head_energy = np.abs(audio[:trim_samples].astype(np.float32)).mean()
+                body_energy = np.abs(audio[trim_samples:trim_samples * 3].astype(np.float32)).mean()
+                # Trim only if the head is significantly louder than the body
+                # (i.e., a sound effect burst, not normal speech)
+                if head_energy > body_energy * 2.5 and head_energy > 500:
+                    audio = audio[trim_samples:]
 
             duration_s = len(audio) / cfg["audio"]["sample_rate"]
             print(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")

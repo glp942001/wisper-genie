@@ -29,10 +29,14 @@ def detect_command(text: str) -> CommandResult | None:
     text = text.strip()
     if not text:
         return None
+    # Strip trailing punctuation that ASR may have added (e.g., "Delete that.")
+    clean = re.sub(r"[.,!?;:]+$", "", text).strip()
+    if not clean:
+        return None
     for pattern, action, args in _COMMANDS:
-        if pattern.match(text):
+        if pattern.match(clean):
             return CommandResult(action=action, args=dict(args))
-    m = _REPLACE_PATTERN.match(text)
+    m = _REPLACE_PATTERN.match(clean)
     if m:
         return CommandResult(action="replace", args={"find": m.group(1), "replacement": m.group(2)})
     return None

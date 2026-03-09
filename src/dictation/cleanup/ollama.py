@@ -73,6 +73,7 @@ class OllamaCleanup:
                         "num_predict": 256,
                         "temperature": 0.0,
                     },
+                    "think": False,
                 },
             )
             resp.raise_for_status()
