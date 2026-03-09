@@ -18,7 +18,7 @@ frame_size_ms = 30
 [asr]
 backend = "whisper_cpp"
 # Path is relative to project root; setup_models.sh downloads here
-model_path = "models/ggml-medium.bin"
+model_path = "models/ggml-small.bin"
 # Empty string = auto-detect (better for accented English)
 language = ""
 

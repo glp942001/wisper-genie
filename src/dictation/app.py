@@ -37,7 +37,6 @@ def main() -> None:
     from dictation.cleanup.ollama import OllamaCleanup
     from dictation.commands.handler import detect_command, execute_command
     from dictation.context.dictionary import load_dictionary
-    from dictation.context.screen import get_screen_context
     from dictation.output.injector import ClipboardInjector
     from dictation.telemetry.latency import LatencyTracker
     from dictation.transcript.buffer import TranscriptBuffer

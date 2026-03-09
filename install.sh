@@ -20,8 +20,8 @@ VENV_DIR="$INSTALL_DIR/.venv"
 WRAPPER_SRC="$INSTALL_DIR/scripts/dictation-wrapper"
 WRAPPER_DST="$HOME/.local/bin/dictation"
 MODEL_DIR="$INSTALL_DIR/models"
-WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
-WHISPER_MODEL_FILE="$MODEL_DIR/ggml-large-v3-turbo.bin"
+WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
+WHISPER_MODEL_FILE="$MODEL_DIR/ggml-small.bin"
 OLLAMA_MODEL="qwen3.5:2b"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=12
@@ -366,7 +366,7 @@ fi
 # ===========================================================================
 # Step 9: Download Whisper model
 # ===========================================================================
-step "Downloading Whisper model (large-v3-turbo)..."
+step "Downloading Whisper model (small)..."
 
 mkdir -p "$MODEL_DIR"
 
@@ -374,20 +374,20 @@ if [[ -f "$WHISPER_MODEL_FILE" ]]; then
     file_size=$(stat -f%z "$WHISPER_MODEL_FILE" 2>/dev/null || echo "0")
     # The medium model is ~1.5 GB; skip if file looks complete (> 1 GB)
     if [[ "$file_size" -gt 1000000000 ]]; then
-        ok "Whisper large-v3-turbo model already downloaded ($(( file_size / 1048576 )) MB)"
+        ok "Whisper small model already downloaded ($(( file_size / 1048576 )) MB)"
     else
         warn "Existing model file looks incomplete ($(( file_size / 1048576 )) MB). Re-downloading..."
         rm -f "$WHISPER_MODEL_FILE"
-        info "Downloading ggml-large-v3-turbo.bin (~1.6 GB) — this may take a few minutes..."
+        info "Downloading ggml-small.bin (~1.6 GB) — this may take a few minutes..."
         curl -L --progress-bar "$WHISPER_MODEL_URL" -o "$WHISPER_MODEL_FILE"
         clear_quarantine "$WHISPER_MODEL_FILE"
-        ok "Whisper large-v3-turbo model downloaded"
+        ok "Whisper small model downloaded"
     fi
 else
-    info "Downloading ggml-large-v3-turbo.bin (~1.6 GB) — this may take a few minutes..."
+    info "Downloading ggml-small.bin (~1.6 GB) — this may take a few minutes..."
     curl -L --progress-bar "$WHISPER_MODEL_URL" -o "$WHISPER_MODEL_FILE"
     clear_quarantine "$WHISPER_MODEL_FILE"
-    ok "Whisper large-v3-turbo model downloaded"
+    ok "Whisper small model downloaded"
 fi
 
 # ===========================================================================
