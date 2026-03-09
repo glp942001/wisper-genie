@@ -194,22 +194,12 @@ def main() -> None:
                 print(f"[Pipeline] Command executed in {total:.0f}ms")
                 return
 
-            # Gather context for LLM cleanup
-            with latency.track("context"):
-                screen_ctx = get_screen_context()
-
             cleanup_context = {
-                "app_name": screen_ctx["app_name"],
-                "field_text": screen_ctx["field_text"],
                 "dictionary_hint": dictionary["prompt_hint"],
                 "has_backtrack": has_backtrack,
-                "recent_utterances": recent_ctx,
             }
 
-            if screen_ctx["app_name"]:
-                print(f"[Context] App: {screen_ctx['app_name']}")
-
-            # LLM cleanup with full context
+            # LLM cleanup
             with latency.track("cleanup"):
                 cleaned = cleanup.cleanup(normalized, context=cleanup_context)
 
