@@ -18,6 +18,8 @@ terms = [
     "API", "JSON", "AWS", "OAuth",
     "Kubernetes", "kubectl", "Docker",
     "PostgreSQL", "Redis", "FastAPI",
+    "latency", "average", "throughput", "endpoint",
+    "deployment", "repository", "microservice",
 ]
 
 # Abbreviations and their expansions (for future use)

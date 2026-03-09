@@ -7,18 +7,18 @@ MODELS_DIR="$PROJECT_DIR/models"
 
 echo "=== Dictation Pipeline — Model Setup ==="
 
-# 1. Download whisper.cpp medium model
+# 1. Download whisper.cpp large-v3-turbo model
 echo ""
-echo "--- Downloading whisper medium model ---"
+echo "--- Downloading whisper large-v3-turbo model ---"
 mkdir -p "$MODELS_DIR"
-MODEL_FILE="$MODELS_DIR/ggml-medium.bin"
+MODEL_FILE="$MODELS_DIR/ggml-large-v3-turbo.bin"
 
 if [ -f "$MODEL_FILE" ]; then
     echo "Model already exists at $MODEL_FILE, skipping download."
 else
-    echo "Downloading ggml-medium.bin (~1.5GB)..."
+    echo "Downloading ggml-large-v3-turbo.bin (~1.6GB)..."
     curl -L --progress-bar \
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin" \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin" \
         -o "$MODEL_FILE"
     echo "Downloaded to $MODEL_FILE"
 fi
@@ -35,5 +35,5 @@ fi
 
 echo ""
 echo "=== Setup complete ==="
-echo "Whisper model: $MODEL_FILE (medium)"
+echo "Whisper model: $MODEL_FILE (large-v3-turbo)"
 echo "Ollama model: ministral-3:3b"

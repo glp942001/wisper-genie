@@ -41,7 +41,7 @@ The installer will:
 4. Create a Python virtual environment and install dependencies
 5. Install the `dictation` command to `~/.local/bin/`
 6. Prompt to install Ollama (local LLM runtime)
-7. Download the Whisper medium model (~1.5 GB)
+7. Download the Whisper large-v3-turbo model (~1.5 GB)
 8. Pull the ministral-3:3b cleanup model (~2 GB)
 9. Open macOS Accessibility and Microphone permission settings
 
@@ -88,7 +88,7 @@ dictation autostart --remove  # Stop launching on login
 ## Architecture
 
 ```
-Audio → ASR (Whisper medium, with initial_prompt from dictionary + context)
+Audio → ASR (Whisper large-v3-turbo, with initial_prompt from dictionary + context)
   → Normalize (filler removal, dictation commands, backtrack detection)
   → Voice command check (routes commands to handler, skips LLM)
   → Screen context capture (active app name + text field content via AX APIs)
@@ -122,7 +122,7 @@ Audio → ASR (Whisper medium, with initial_prompt from dictionary + context)
 device = "auto"          # "auto" prefers AirPods/external, "default" for system default
 
 [asr]
-model_path = "models/ggml-medium.bin"
+model_path = "models/ggml-large-v3-turbo.bin"
 language = "en"
 
 [cleanup]
