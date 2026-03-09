@@ -349,6 +349,8 @@ def main() -> None:
             recorded_frames = list(pre_buffer)
             pre_buffer.clear()
 
+        # Clear clipboard from previous dictation (deferred from inject)
+        injector.clear_clipboard()
         play_sound(sound_start)
         print("  🎙️  Recording...")
 

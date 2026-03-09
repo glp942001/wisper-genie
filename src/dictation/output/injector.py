@@ -23,15 +23,16 @@ class ClipboardInjector:
         if not text:
             return
 
-        try:
-            self._set_clipboard(text)
-            time.sleep(self._paste_delay)
-            self._paste()
-            time.sleep(0.01)
-        finally:
-            # Always clear clipboard — even on exception — to prevent leaking
-            # sensitive dictated text into the system clipboard.
-            self._pasteboard.clearContents()
+        self._set_clipboard(text)
+        time.sleep(self._paste_delay)
+        self._paste()
+        # Do NOT clear clipboard here. The target app (especially browsers)
+        # may not have read the clipboard yet. Clipboard is cleared on
+        # the next call to inject() or clear_clipboard().
+
+    def clear_clipboard(self) -> None:
+        """Clear the clipboard. Called before next recording starts."""
+        self._pasteboard.clearContents()
 
     def _set_clipboard(self, text: str) -> None:
         """Set clipboard using NSPasteboard (native, no subprocess)."""
