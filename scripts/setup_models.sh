@@ -27,13 +27,13 @@ fi
 echo ""
 echo "--- Pulling Ollama ministral:3b model ---"
 if command -v ollama &> /dev/null; then
-    ollama pull ministral-3:3b
-    echo "Ollama ministral-3:3b ready."
+    ollama pull qwen3.5:2b
+    echo "Ollama qwen3.5:2b ready."
 else
-    echo "WARNING: ollama not found. Install from https://ollama.com and run: ollama pull ministral-3:3b"
+    echo "WARNING: ollama not found. Install from https://ollama.com and run: ollama pull qwen3.5:2b"
 fi
 
 echo ""
 echo "=== Setup complete ==="
 echo "Whisper model: $MODEL_FILE (large-v3-turbo)"
-echo "Ollama model: ministral-3:3b"
+echo "Ollama model: qwen3.5:2b"

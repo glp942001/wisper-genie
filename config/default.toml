@@ -24,7 +24,7 @@ language = ""
 
 [cleanup]
 backend = "ollama"
-model = "ministral-3:3b"
+model = "qwen3.5:2b"
 base_url = "http://localhost:11434"
 # Timeout in ms; if exceeded, return raw transcript (fail-open)
 # First request may be slow due to Ollama cold start

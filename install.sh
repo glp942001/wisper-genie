@@ -22,7 +22,7 @@ WRAPPER_DST="$HOME/.local/bin/dictation"
 MODEL_DIR="$INSTALL_DIR/models"
 WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
 WHISPER_MODEL_FILE="$MODEL_DIR/ggml-large-v3-turbo.bin"
-OLLAMA_MODEL="ministral-3:3b"
+OLLAMA_MODEL="qwen3.5:2b"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=12
 TOTAL_STEPS=11
@@ -397,7 +397,7 @@ step "Pulling Ollama model ($OLLAMA_MODEL)..."
 
 if command -v ollama &>/dev/null; then
     # Check if the model is already pulled
-    if ollama list 2>/dev/null | grep -q "ministral-3"; then
+    if ollama list 2>/dev/null | grep -q "qwen3.5"; then
         ok "Model $OLLAMA_MODEL is already available"
     else
         info "Pulling $OLLAMA_MODEL — this may take a minute..."
