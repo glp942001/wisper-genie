@@ -61,6 +61,15 @@ info() {
     printf "  ${BOLD}→${RESET} %s\n" "$1"
 }
 
+clear_quarantine() {
+    # macOS Gatekeeper adds com.apple.quarantine to downloaded files, causing
+    # "unidentified developer" or "damaged" warnings. Strip it silently.
+    local target="$1"
+    if xattr -l "$target" 2>/dev/null | grep -q "com.apple.quarantine"; then
+        xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Require macOS
 # ---------------------------------------------------------------------------
@@ -194,6 +203,8 @@ clone_repo() {
     else
         fail "Could not clone repository. Make sure you have access to the private repo.\n  HTTPS: $REPO_URL\n  SSH:   $REPO_SSH\n  Configure SSH keys or a personal access token first."
     fi
+    # Strip macOS quarantine flags from all repo files
+    clear_quarantine "$INSTALL_DIR"
 }
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -251,6 +262,9 @@ else
     ok "Dependencies installed"
 fi
 
+# Strip quarantine from venv binaries (pip downloads can be flagged)
+clear_quarantine "$VENV_DIR"
+
 deactivate 2>/dev/null || true
 
 # ===========================================================================
@@ -263,6 +277,7 @@ mkdir -p "$(dirname "$WRAPPER_DST")"
 if [[ -f "$WRAPPER_SRC" ]]; then
     cp "$WRAPPER_SRC" "$WRAPPER_DST"
     chmod +x "$WRAPPER_DST"
+    clear_quarantine "$WRAPPER_DST"
     ok "Installed wrapper to $WRAPPER_DST"
 else
     fail "Wrapper script not found at $WRAPPER_SRC. The repository may be incomplete."
@@ -335,6 +350,10 @@ if [[ "$install_ollama" == true ]]; then
     brew install --cask ollama
     if command -v ollama &>/dev/null || [[ -d "/Applications/Ollama.app" ]]; then
         ok "Ollama installed"
+        # Remove Gatekeeper quarantine so Ollama opens without "unidentified developer" warning
+        if [[ -d "/Applications/Ollama.app" ]]; then
+            clear_quarantine "/Applications/Ollama.app"
+        fi
         info "Starting Ollama.app..."
         open -a Ollama 2>/dev/null || true
         # Give Ollama a moment to start its server
@@ -361,11 +380,13 @@ if [[ -f "$WHISPER_MODEL_FILE" ]]; then
         rm -f "$WHISPER_MODEL_FILE"
         info "Downloading ggml-medium.bin (~1.5 GB) — this may take a few minutes..."
         curl -L --progress-bar "$WHISPER_MODEL_URL" -o "$WHISPER_MODEL_FILE"
+        clear_quarantine "$WHISPER_MODEL_FILE"
         ok "Whisper medium model downloaded"
     fi
 else
     info "Downloading ggml-medium.bin (~1.5 GB) — this may take a few minutes..."
     curl -L --progress-bar "$WHISPER_MODEL_URL" -o "$WHISPER_MODEL_FILE"
+    clear_quarantine "$WHISPER_MODEL_FILE"
     ok "Whisper medium model downloaded"
 fi
 
