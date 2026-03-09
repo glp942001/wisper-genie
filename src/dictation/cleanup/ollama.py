@@ -54,7 +54,7 @@ class OllamaCleanup:
             return raw_transcript
 
         system_msg = {"role": "system", "content": build_cleanup_system(context)}
-        user_content = build_cleanup_message(raw_transcript, context)
+        user_content = build_cleanup_message(raw_transcript)
 
         # Build full message array: system + few-shot + current request
         messages = [system_msg] + self._few_shot + [

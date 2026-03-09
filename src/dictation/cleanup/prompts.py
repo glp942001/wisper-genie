@@ -161,6 +161,17 @@ def build_cleanup_system(context: dict | None = None) -> str:
                 'For example, "two actually three" means three, not two.'
             )
 
+        field_text = context.get("field_text", "")
+        if field_text:
+            parts.append(
+                f"\nThe text field already contains: ...{field_text}\n"
+                "Continue naturally — match capitalization and tone of existing text."
+            )
+
+        recent = context.get("recent_utterances", "")
+        if recent:
+            parts.append(f"\nRecent utterances for context: {recent}")
+
     return "\n".join(parts)
 
 
@@ -173,28 +184,12 @@ def build_few_shot_messages() -> list[dict[str, str]]:
     return messages
 
 
-def build_cleanup_message(
-    transcript: str,
-    context: dict | None = None,
-) -> str:
-    """Build the user message for cleanup, optionally with context.
+def build_cleanup_message(transcript: str) -> str:
+    """Build the user message for cleanup.
 
-    Args:
-        transcript: The normalized ASR text.
-        context: Optional dict with keys:
-            - field_text: str (existing text in the focused field)
-            - recent_utterances: str (last 2-3 utterances for continuity)
+    The user message contains ONLY the raw transcript — nothing else.
+    All context (app name, field text, history, dictionary) goes in the
+    system prompt. Small LLMs echo anything in the user message, so it
+    must be clean.
     """
-    parts = []
-
-    if context:
-        field_text = context.get("field_text", "")
-        if field_text:
-            parts.append(f"[Existing text in field]: ...{field_text}")
-
-        recent = context.get("recent_utterances", "")
-        if recent:
-            parts.append(f"[Previous utterances]: {recent}")
-
-    parts.append(transcript)
-    return "\n".join(parts)
+    return transcript
