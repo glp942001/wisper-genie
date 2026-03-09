@@ -476,10 +476,10 @@ printf "\n${BLUE}${BOLD}[%d/%d]${RESET} %s\n" "$_step" "$TOTAL_STEPS" "Setting u
 CONFIG_FILE="$INSTALL_DIR/config/default.toml"
 
 printf "\n"
-printf "  Press the key you want to use for push-to-talk.\n"
+printf "  Choose your push-to-talk key by pressing it now.\n"
 printf "  ${BOLD}Recommended: Right Option or Right Control.${RESET}\n"
 printf "\n"
-printf "  Press your chosen key now...\n"
+printf "  Press your chosen key...\n"
 
 # Detect whatever key the user presses
 DETECTED_KEY=$("$VENV_DIR/bin/python" -c "
