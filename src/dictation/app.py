@@ -352,23 +352,32 @@ def main() -> None:
         threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
 
     # --- Audio capture loop ---
-    # Mic stream is always running. This loop always reads frames to keep
-    # the queue drained. When recording=True, frames are stored.
-    # When recording=False, frames are discarded.
+    # Mic stream is always running. This loop drains frames continuously.
+    # When recording=True, frames are stored. When False, frames are
+    # discarded immediately to keep the queue empty for the next recording.
     def capture_loop() -> None:
         nonlocal recording
         while not shutdown_event.is_set():
             try:
-                frame = mic.read(timeout=0.1)
-                if frame is None:
-                    continue
                 with lock:
-                    if recording:
-                        recorded_frames.append(frame)
-                    # else: frame is discarded (keeps queue drained)
+                    is_rec = recording
+                if is_rec:
+                    # Recording: read frames one at a time and store them
+                    frame = mic.read(timeout=0.03)
+                    if frame is not None:
+                        with lock:
+                            if recording:
+                                recorded_frames.append(frame)
+                else:
+                    # Not recording: drain ALL queued frames to keep queue empty.
+                    # This ensures when recording starts, the queue has only
+                    # fresh frames — not stale silence from seconds ago.
+                    drained = mic.read_all()
+                    if not drained:
+                        time.sleep(0.03)  # nothing to drain, avoid busy loop
             except Exception as exc:
                 _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
-                time.sleep(0.1)  # avoid tight error loop
+                time.sleep(0.1)
 
     capture_thread = threading.Thread(target=capture_loop, daemon=True)
     capture_thread.start()
