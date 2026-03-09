@@ -156,7 +156,6 @@ def main() -> None:
             # Do NOT include recent utterances — Whisper hallucinates from them
             # when audio is unclear, producing the previous text instead of new speech.
             whisper_prompt = dictionary["whisper_hint"] if dictionary["whisper_hint"] else None
-            recent_ctx = transcript_buf.get_context(n=2)
 
             # ASR
             with latency.track("asr"):

@@ -121,6 +121,12 @@ class MicCapture:
                 return
             self._frames_dropped = 0
             self._device_errors = 0
+            # Drain any leftover frames from a previous session
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
             try:
                 self._stream = sd.InputStream(
                     samplerate=self.sample_rate,
