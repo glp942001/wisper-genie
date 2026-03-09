@@ -25,7 +25,7 @@ WHISPER_MODEL_FILE="$MODEL_DIR/ggml-medium.bin"
 OLLAMA_MODEL="ministral-3:3b"
 MIN_PYTHON_MAJOR=3
 MIN_PYTHON_MINOR=12
-TOTAL_STEPS=10
+TOTAL_STEPS=11
 
 # ---------------------------------------------------------------------------
 # Colors & helpers
@@ -413,6 +413,61 @@ else
 fi
 
 # ===========================================================================
+# Step 11: macOS permissions
+# ===========================================================================
+step "Setting up macOS permissions..."
+
+# Detect which terminal app is running (for clearer instructions)
+TERM_APP="your terminal app"
+if [[ "$TERM_PROGRAM" == "Apple_Terminal" ]]; then
+    TERM_APP="Terminal"
+elif [[ "$TERM_PROGRAM" == "iTerm.app" ]]; then
+    TERM_APP="iTerm2"
+elif [[ "$TERM_PROGRAM" == "WarpTerminal" ]]; then
+    TERM_APP="Warp"
+elif [[ -n "${TERM_PROGRAM:-}" ]]; then
+    TERM_APP="$TERM_PROGRAM"
+fi
+
+printf "\n"
+printf "  ${YELLOW}${BOLD}Wisper Genie needs two macOS permissions to work:${RESET}\n"
+printf "\n"
+printf "  ${BOLD}1. Accessibility${RESET} — so it can read screen context and paste text\n"
+printf "  ${BOLD}2. Microphone${RESET}    — so it can hear you speak\n"
+printf "\n"
+printf "  Both require adding ${BOLD}${TERM_APP}${RESET} in System Settings.\n"
+printf "\n"
+
+# --- Accessibility ---
+printf "  ${BLUE}${BOLD}Opening Accessibility settings...${RESET}\n"
+printf "  → Add ${BOLD}${TERM_APP}${RESET} to the list and toggle it ON.\n"
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || \
+    open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility" 2>/dev/null || true
+
+printf "  Press ${BOLD}Enter${RESET} once you've granted Accessibility access..."
+if [[ -t 0 ]]; then
+    read -r
+else
+    read -r < /dev/tty 2>/dev/null || true
+fi
+ok "Accessibility — done"
+
+# --- Microphone ---
+printf "\n"
+printf "  ${BLUE}${BOLD}Opening Microphone settings...${RESET}\n"
+printf "  → Toggle ON microphone access for ${BOLD}${TERM_APP}${RESET}.\n"
+open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone" 2>/dev/null || \
+    open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone" 2>/dev/null || true
+
+printf "  Press ${BOLD}Enter${RESET} once you've granted Microphone access..."
+if [[ -t 0 ]]; then
+    read -r
+else
+    read -r < /dev/tty 2>/dev/null || true
+fi
+ok "Microphone — done"
+
+# ===========================================================================
 # Done!
 # ===========================================================================
 printf "\n"
@@ -425,12 +480,6 @@ printf "  ${BOLD}dictation${RESET}              Start dictating (hold Right Opti
 printf "  ${BOLD}dictation install${RESET}      Re-run model setup\n"
 printf "  ${BOLD}dictation autostart${RESET}    Launch on login\n"
 printf "  ${BOLD}dictation --help${RESET}       Show all commands\n"
-printf "\n"
-printf "${YELLOW}${BOLD}Important — macOS permissions required:${RESET}\n"
-printf "  ${YELLOW}1.${RESET} ${BOLD}Accessibility:${RESET} System Settings → Privacy & Security → Accessibility\n"
-printf "     Add your terminal app (Terminal, iTerm2, etc.)\n"
-printf "  ${YELLOW}2.${RESET} ${BOLD}Microphone:${RESET}     System Settings → Privacy & Security → Microphone\n"
-printf "     Allow your terminal app to access the microphone\n"
 printf "\n"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
     printf "${YELLOW}Note:${RESET} Run ${BOLD}source ~/.zshrc${RESET} or open a new terminal before using 'dictation'.\n"
