@@ -90,7 +90,9 @@ class MicCapture:
             self.device = None
         else:
             self.device = device
-        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=1000)
+        # 100 frames at 30ms = 3 seconds of buffer. Enough for the capture
+        # loop to keep up, small enough to avoid stale frame buildup.
+        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=100)
         self._stream: sd.InputStream | None = None
         self._running = False
         self._lock = threading.Lock()
