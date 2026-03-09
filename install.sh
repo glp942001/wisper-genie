@@ -468,139 +468,94 @@ fi
 ok "Microphone — done"
 
 # ===========================================================================
-# Step 12: Test hotkey
+# Step 12: Set up hotkey
 # ===========================================================================
 _step=$(( _step + 1 ))
-printf "\n${BLUE}${BOLD}[%d/%d]${RESET} %s\n" "$_step" "$TOTAL_STEPS" "Testing your hotkey..."
-
-# Helper: detect ANY key press within 10 seconds, return its name
-_detect_any_key() {
-    "$VENV_DIR/bin/python" -c "
-import sys, time
-from pynput import keyboard
-
-detected = [False]
-key_name = [None]
-
-def on_press(key):
-    name = getattr(key, 'name', None)
-    if name:
-        detected[0] = True
-        key_name[0] = name
-        return False
-
-listener = keyboard.Listener(on_press=on_press)
-listener.start()
-for i in range(100):
-    time.sleep(0.1)
-    if detected[0]:
-        break
-listener.stop()
-if detected[0]:
-    print(key_name[0])
-else:
-    print('TIMEOUT')
-" 2>/dev/null
-}
+printf "\n${BLUE}${BOLD}[%d/%d]${RESET} %s\n" "$_step" "$TOTAL_STEPS" "Setting up your push-to-talk key..."
 
 CONFIG_FILE="$INSTALL_DIR/config/default.toml"
 
-# Map key names to config values and display names
-_key_config_value() {
-    case "$1" in
-        alt_r|alt_gr)  echo "<alt_r>" ;;
-        alt_l|alt)     echo "<alt_r>" ;;
-        cmd_r)         echo "<cmd_r>" ;;
-        cmd|cmd_l)     echo "<cmd_r>" ;;
-        shift_r)       echo "<shift_r>" ;;
-        ctrl_r)        echo "<ctrl_r>" ;;
-        f18)           echo "<f18>" ;;
-        *)             echo "<$1>" ;;
-    esac
-}
+printf "\n"
+printf "  Press the key you want to use for push-to-talk.\n"
+printf "  ${BOLD}Recommended: Right Option or Right Control.${RESET}\n"
+printf "\n"
+printf "  Press your chosen key now...\n"
 
-_test_key() {
-    local prompt_name="$1"
-    printf "\n"
-    printf "  Press and release ${BOLD}${prompt_name}${RESET} now...\n"
-    local result
-    result=$(_detect_any_key)
-    echo "$result"
-}
+# Detect whatever key the user presses
+DETECTED_KEY=$("$VENV_DIR/bin/python" -c "
+import time
+from pynput import keyboard
+result = [None]
+def on_press(key):
+    name = getattr(key, 'name', None)
+    if name:
+        result[0] = name
+        return False
+listener = keyboard.Listener(on_press=on_press)
+listener.start()
+for _ in range(150):
+    time.sleep(0.1)
+    if result[0]:
+        break
+listener.stop()
+print(result[0] or 'TIMEOUT')
+" 2>/dev/null)
 
-# --- Test Right Option key ---
-printf "\n  Let's make sure your hotkey works.\n"
-DETECTED=$(_test_key "Right Option key")
-
-if [[ "$DETECTED" != "TIMEOUT" ]]; then
-    ok "Key detected: $DETECTED"
-
-    # Check if it's an alt variant (expected for Right Option)
-    case "$DETECTED" in
-        alt_r|alt_gr|alt_l|alt)
-            ok "Right Option key works!"
-            ;;
-        *)
-            warn "That was '$DETECTED', not Right Option."
-            printf "  We'll use '$DETECTED' as your hotkey instead.\n"
-            NEW_KEY=$(_key_config_value "$DETECTED")
-            sed -i '' "s/keys = \\[\"<alt_r>\"\\]/keys = [\"${NEW_KEY}\"]/" "$CONFIG_FILE"
-            ok "Hotkey set to $DETECTED ($NEW_KEY)"
-            ;;
-    esac
+if [[ "$DETECTED_KEY" == "TIMEOUT" || -z "$DETECTED_KEY" ]]; then
+    warn "No key detected. Using Right Option as default."
+    info "Change later in ~/.wisper-genie/config/default.toml"
 else
-    warn "No key detected within 10 seconds."
-    printf "\n"
-    printf "  Choose an alternative hotkey to test:\n"
-    printf "\n"
-    printf "    ${BOLD}1)${RESET} Right Command key\n"
-    printf "    ${BOLD}2)${RESET} Right Shift key\n"
-    printf "    ${BOLD}3)${RESET} Right Control key\n"
-    printf "    ${BOLD}4)${RESET} Skip (keep Right Option, configure later)\n"
-    printf "\n"
-    printf "  Choose [1-4]: "
+    ok "Detected: $DETECTED_KEY"
 
-    if [[ -t 0 ]]; then
-        read -r choice
+    # Write the key to config
+    "$VENV_DIR/bin/python" -c "
+import sys
+key = sys.argv[1]
+config = open('$CONFIG_FILE').read()
+import re
+config = re.sub(r'keys = \[\"[^\"]*\"\]', f'keys = [\"<{key}>\"]', config)
+open('$CONFIG_FILE', 'w').write(config)
+" "$DETECTED_KEY" 2>/dev/null
+
+    ok "Hotkey set to: $DETECTED_KEY"
+    printf "\n"
+    printf "  ${BOLD}Verify:${RESET} Press ${BOLD}$DETECTED_KEY${RESET} one more time to confirm...\n"
+
+    # Verify
+    VERIFY_KEY=$("$VENV_DIR/bin/python" -c "
+import time
+from pynput import keyboard
+result = [None]
+def on_press(key):
+    name = getattr(key, 'name', None)
+    if name:
+        result[0] = name
+        return False
+listener = keyboard.Listener(on_press=on_press)
+listener.start()
+for _ in range(100):
+    time.sleep(0.1)
+    if result[0]:
+        break
+listener.stop()
+print(result[0] or 'TIMEOUT')
+" 2>/dev/null)
+
+    if [[ "$VERIFY_KEY" == "$DETECTED_KEY" ]]; then
+        ok "Confirmed! Push-to-talk key: $DETECTED_KEY"
+    elif [[ "$VERIFY_KEY" != "TIMEOUT" ]]; then
+        warn "Got '$VERIFY_KEY' instead of '$DETECTED_KEY'. Using '$VERIFY_KEY'."
+        "$VENV_DIR/bin/python" -c "
+import sys, re
+key = sys.argv[1]
+config = open('$CONFIG_FILE').read()
+config = re.sub(r'keys = \[\"[^\"]*\"\]', f'keys = [\"<{key}>\"]', config)
+open('$CONFIG_FILE', 'w').write(config)
+" "$VERIFY_KEY" 2>/dev/null
+        ok "Hotkey updated to: $VERIFY_KEY"
     else
-        read -r choice < /dev/tty 2>/dev/null || choice="4"
+        info "No confirmation received — keeping $DETECTED_KEY."
     fi
-
-    case "${choice:-4}" in
-        1)
-            DETECTED=$(_test_key "Right Command key")
-            if [[ "$DETECTED" != "TIMEOUT" ]]; then
-                ok "Key detected: $DETECTED"
-                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<cmd_r>"]/' "$CONFIG_FILE"
-                ok "Hotkey set to Right Command key"
-            else
-                warn "Key not detected. You can change hotkey later in config/default.toml."
-            fi
-            ;;
-        2)
-            DETECTED=$(_test_key "Right Shift key")
-            if [[ "$DETECTED" != "TIMEOUT" ]]; then
-                ok "Key detected: $DETECTED"
-                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<shift_r>"]/' "$CONFIG_FILE"
-                ok "Hotkey set to Right Shift key"
-            else
-                warn "Key not detected. You can change hotkey later in config/default.toml."
-            fi
-            ;;
-        3)
-            DETECTED=$(_test_key "Right Control key")
-            if [[ "$DETECTED" != "TIMEOUT" ]]; then
-                ok "Key detected: $DETECTED"
-                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<ctrl_r>"]/' "$CONFIG_FILE"
-                ok "Hotkey set to Right Control key"
-            else
-                warn "Key not detected. You can change hotkey later in config/default.toml."
-            fi
-            ;;
-        *)
-            info "Keeping Right Option key. Change it later in config/default.toml."
-            ;;
-    esac
 fi
 
 # ===========================================================================
