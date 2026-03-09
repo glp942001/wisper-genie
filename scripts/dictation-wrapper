@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Wisper Genie — dictation tool wrapper
-# This script is copied to ~/.local/bin/dictation by the installer.
+# Wisper Genie — CLI wrapper
+# This script is copied to ~/.local/bin/wisper-genie by the installer.
 set -euo pipefail
 
 GENIE_HOME="$HOME/.wisper-genie"
@@ -31,12 +31,12 @@ case "${1:-}" in
         echo "Wisper Genie — AI dictation tool"
         echo ""
         echo "Usage:"
-        echo "  dictation              Start dictating (hold Right Option to speak)"
-        echo "  dictation install      Re-run model setup"
-        echo "  dictation autostart    Launch on login"
-        echo "  dictation autostart --remove   Stop launching on login"
-        echo "  dictation uninstall    Remove Wisper Genie from your system"
-        echo "  dictation --help       Show this help"
+        echo "  wisper-genie              Start dictating (hold Right Option to speak)"
+        echo "  wisper-genie install      Re-run model setup"
+        echo "  wisper-genie autostart    Launch on login"
+        echo "  wisper-genie autostart --remove   Stop launching on login"
+        echo "  wisper-genie uninstall    Remove Wisper Genie from your system"
+        echo "  wisper-genie --help       Show this help"
         ;;
     *)
         python -m dictation.app "$@"

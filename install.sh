@@ -18,7 +18,7 @@ REPO_SSH="git@github.com:glp942001/wisper-genie.git"      # SSH   (fallback)
 INSTALL_DIR="$HOME/.wisper-genie"
 VENV_DIR="$INSTALL_DIR/.venv"
 WRAPPER_SRC="$INSTALL_DIR/scripts/dictation-wrapper"
-WRAPPER_DST="$HOME/.local/bin/dictation"
+WRAPPER_DST="$HOME/.local/bin/wisper-genie"
 MODEL_DIR="$INSTALL_DIR/models"
 WHISPER_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
 WHISPER_MODEL_FILE="$MODEL_DIR/ggml-small.bin"
@@ -270,7 +270,7 @@ deactivate 2>/dev/null || true
 # ===========================================================================
 # Step 6: Install wrapper script
 # ===========================================================================
-step "Installing dictation command..."
+step "Installing wisper-genie command..."
 
 mkdir -p "$(dirname "$WRAPPER_DST")"
 
@@ -304,7 +304,7 @@ else
         echo "# Added by Wisper Genie installer" >> "$SHELL_RC"
         echo "$EXPORT_LINE" >> "$SHELL_RC"
         ok "Updated $SHELL_RC"
-        info "Run 'source ~/.zshrc' or open a new terminal to use the 'dictation' command"
+        info "Run 'source ~/.zshrc' or open a new terminal to use the 'wisper-genie' command"
     fi
 
     # Also export for the remainder of this script
@@ -476,13 +476,13 @@ printf "${GREEN}${BOLD}   Installation complete!${RESET}\n"
 printf "${GREEN}${BOLD}========================================${RESET}\n"
 printf "\n"
 printf "${BOLD}Quick start:${RESET}\n"
-printf "  ${BOLD}dictation${RESET}              Start dictating (hold Right Option to speak)\n"
-printf "  ${BOLD}dictation install${RESET}      Re-run model setup\n"
-printf "  ${BOLD}dictation autostart${RESET}    Launch on login\n"
-printf "  ${BOLD}dictation --help${RESET}       Show all commands\n"
+printf "  ${BOLD}wisper-genie${RESET}              Start dictating (hold Right Option to speak)\n"
+printf "  ${BOLD}wisper-genie install${RESET}      Re-run model setup\n"
+printf "  ${BOLD}wisper-genie autostart${RESET}    Launch on login\n"
+printf "  ${BOLD}wisper-genie --help${RESET}       Show all commands\n"
 printf "\n"
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
-    printf "${YELLOW}Note:${RESET} Run ${BOLD}source ~/.zshrc${RESET} or open a new terminal before using 'dictation'.\n"
+    printf "${YELLOW}Note:${RESET} Run ${BOLD}source ~/.zshrc${RESET} or open a new terminal before using 'wisper-genie'.\n"
     printf "\n"
 fi
 printf "Happy dictating! 🎙️\n\n"

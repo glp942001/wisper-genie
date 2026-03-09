@@ -17,7 +17,7 @@ Everything runs locally on your Mac. No audio leaves your machine.
 - **Entity formatting** — Numbers, dates, and currencies formatted naturally ("twenty dollars" becomes "$20").
 - **Smart mic selection** — Auto-detects AirPods and external mics, prefers them over built-in.
 - **Whisper hallucination filtering** — Strips `[BLANK_AUDIO]` and other artifacts from silent recordings.
-- **Auto-start on login** — Optional launch agent via `dictation autostart`.
+- **Auto-start on login** — Optional launch agent via `wisper-genie autostart`.
 
 ## Requirements
 
@@ -50,12 +50,12 @@ After installation, open a new terminal (or run `source ~/.zshrc`) and you're re
 ## Usage
 
 ```bash
-dictation              # Start dictating
-dictation --help       # Show all commands
-dictation install      # Re-download models if needed
-dictation autostart    # Launch on login
-dictation autostart --remove  # Stop launching on login
-dictation uninstall    # Remove Wisper Genie completely
+wisper-genie              # Start dictating
+wisper-genie --help       # Show all commands
+wisper-genie install      # Re-download models if needed
+wisper-genie autostart    # Launch on login
+wisper-genie autostart --remove  # Stop launching on login
+wisper-genie uninstall    # Remove Wisper Genie completely
 ```
 
 **Dictating:**
@@ -250,19 +250,19 @@ Note: `test_asr.py` and `test_injector.py` require native macOS dependencies (`p
 - Check the model is pulled: `ollama list` should show `qwen3.5:2b`
 - Re-pull if needed: `ollama pull qwen3.5:2b`
 
-**"command not found: dictation"**
+**"command not found: wisper-genie"**
 - Run `source ~/.zshrc` or open a new terminal
-- Verify: `ls ~/.local/bin/dictation`
+- Verify: `ls ~/.local/bin/wisper-genie`
 
 **Uninstall**
 ```bash
-dictation uninstall
+wisper-genie uninstall
 ```
 This removes `~/.wisper-genie/`, the `dictation` command, and the autostart plist. Ollama and its models are left in place (shared system tool). To remove those too: `brew uninstall --cask ollama && ollama rm qwen3.5:2b`.
 
 **Reinstall from scratch**
 ```bash
-dictation uninstall
+wisper-genie uninstall
 curl -fsSL https://raw.githubusercontent.com/glp942001/wisper-genie/main/install.sh | bash
 ```
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 PLIST_NAME = "com.wisper-genie.dictation"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
-WRAPPER_PATH = Path.home() / ".local" / "bin" / "dictation"
+WRAPPER_PATH = Path.home() / ".local" / "bin" / "wisper-genie"
 
 
 def _create_plist() -> None:
