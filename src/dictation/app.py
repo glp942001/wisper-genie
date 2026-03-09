@@ -87,6 +87,11 @@ def main() -> None:
         device=cfg["audio"].get("device"),
         dtype=cfg["audio"]["dtype"],
     )
+    # Warmup mic: open/close stream once to initialize CoreAudio.
+    # Without this, the first recording often fails or is delayed.
+    mic.start()
+    time.sleep(0.1)
+    mic.stop()
 
     transcript_buf = TranscriptBuffer()
 
@@ -241,9 +246,12 @@ def main() -> None:
 
     # --- Hotkey handler (push-to-talk) ---
     hotkey_keys = set()
+    # Map of alt key variants — macOS reports Right Option inconsistently
+    _ALT_VARIANTS = {"alt_r", "alt_gr", "alt_l", "alt"}
     for k in cfg["hotkey"]["keys"]:
+        key_name = k.strip("<>")
         try:
-            hotkey_keys.add(keyboard.Key[k.strip("<>")])
+            hotkey_keys.add(keyboard.Key[key_name])
         except (KeyError, AttributeError):
             try:
                 hotkey_keys.add(keyboard.KeyCode.from_char(k))
@@ -254,12 +262,32 @@ def main() -> None:
         print("ERROR: No valid hotkey configured. Check [hotkey] keys in config/default.toml.")
         sys.exit(1)
 
+    def _is_hotkey_match(pressed: set) -> bool:
+        """Check if hotkey is pressed, accounting for alt key variants."""
+        if hotkey_keys.issubset(pressed):
+            return True
+        # Also check if any alt variant matches any configured alt key
+        pressed_names = set()
+        for k in pressed:
+            if hasattr(k, 'name'):
+                pressed_names.add(k.name)
+        configured_names = set()
+        for k in hotkey_keys:
+            if hasattr(k, 'name'):
+                configured_names.add(k.name)
+        # If configured key is an alt variant, accept any alt variant
+        for cfg_name in configured_names:
+            if cfg_name in _ALT_VARIANTS:
+                if pressed_names & _ALT_VARIANTS:
+                    return True
+        return False
+
     def on_press(key: keyboard.Key | keyboard.KeyCode) -> None:
         nonlocal recording, recorded_frames, utterance_id
 
         with lock:
             pressed_keys.add(key)
-            if not hotkey_keys.issubset(pressed_keys):
+            if not _is_hotkey_match(pressed_keys):
                 return
             if recording:
                 return
@@ -277,7 +305,7 @@ def main() -> None:
 
         with lock:
             pressed_keys.discard(key)
-            if not recording or hotkey_keys.issubset(pressed_keys):
+            if not recording or _is_hotkey_match(pressed_keys):
                 return
             recording = False
             frames = list(recorded_frames)
