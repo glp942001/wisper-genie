@@ -101,15 +101,9 @@ def main() -> None:
         device=cfg["audio"].get("device"),
         dtype=cfg["audio"]["dtype"],
     )
-    # Warmup mic: open stream, let CoreAudio fully initialize, then close.
-    # First stream open on macOS triggers driver init (~300ms).
+    # Keep mic stream running permanently — never open/close per recording.
+    # This eliminates CoreAudio cold-start issues entirely.
     mic.start()
-    time.sleep(0.3)
-    mic.stop()
-    # Second warmup to ensure the re-open path is also primed.
-    mic.start()
-    time.sleep(0.1)
-    mic.stop()
     _progress_done()
 
     _progress("Loading dictionary")
@@ -326,8 +320,7 @@ def main() -> None:
             recorded_frames = []
 
         play_sound(sound_start)
-        mic.start()
-        time.sleep(0.05)
+        # Mic stream is always running — just start collecting frames
         recording_event.set()
         print("  🎙️  Recording...")
 
@@ -352,42 +345,30 @@ def main() -> None:
             recorded_frames = []
             uid = utterance_id
 
-        mic.stop()
+        # Mic stream stays running — just stop collecting frames
         recording_event.clear()
         play_sound(sound_stop)
         print("  ⏳ Processing...")
         threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
 
     # --- Audio capture loop ---
+    # Mic stream is always running. This loop always reads frames to keep
+    # the queue drained. When recording=True, frames are stored.
+    # When recording=False, frames are discarded.
     def capture_loop() -> None:
         nonlocal recording
-        consecutive_errors = 0
         while not shutdown_event.is_set():
-            recording_event.wait(timeout=0.1)
-            if shutdown_event.is_set():
-                break
             try:
-                with lock:
-                    is_rec = recording
-                if is_rec:
-                    frame = mic.read(timeout=0.05)
-                    if frame is not None:
-                        with lock:
-                            if recording:
-                                recorded_frames.append(frame)
-                        consecutive_errors = 0
-            except Exception as exc:
-                consecutive_errors += 1
-                _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
+                frame = mic.read(timeout=0.1)
+                if frame is None:
+                    continue
                 with lock:
                     if recording:
-                        recording = False
-                        recording_event.clear()
-                play_sound(sound_error)
-                print("  ⚠ Mic error — release key and try again.")
-                if consecutive_errors >= 3:
-                    print("  ⚠ Multiple mic errors. Check connection.")
-                    consecutive_errors = 0
+                        recorded_frames.append(frame)
+                    # else: frame is discarded (keeps queue drained)
+            except Exception as exc:
+                _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
+                time.sleep(0.1)  # avoid tight error loop
 
     capture_thread = threading.Thread(target=capture_loop, daemon=True)
     capture_thread.start()
@@ -408,7 +389,6 @@ def main() -> None:
     # --- Shutdown ---
     print("\n  Shutting down...")
     shutdown_event.set()
-    recording_event.set()
     mic.stop()
     cleanup.close()
     asr.unload()
