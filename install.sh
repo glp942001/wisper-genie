@@ -430,42 +430,61 @@ elif [[ -n "${TERM_PROGRAM:-}" ]]; then
 fi
 
 printf "\n"
-printf "  ${YELLOW}${BOLD}Wisper Genie needs two macOS permissions to work:${RESET}\n"
+printf "  ${YELLOW}${BOLD}Wisper Genie needs two macOS permissions:${RESET}\n"
 printf "\n"
-printf "  ${BOLD}1. Accessibility${RESET} — so it can read screen context and paste text\n"
-printf "  ${BOLD}2. Microphone${RESET}    — so it can hear you speak\n"
-printf "\n"
-printf "  Both require adding ${BOLD}${TERM_APP}${RESET} in System Settings.\n"
-printf "\n"
-
-# --- Accessibility ---
-printf "  ${BLUE}${BOLD}Opening Accessibility settings...${RESET}\n"
-printf "  → Add ${BOLD}${TERM_APP}${RESET} to the list and toggle it ON.\n"
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility" 2>/dev/null || \
-    open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility" 2>/dev/null || true
-
-printf "  Press ${BOLD}Enter${RESET} once you've granted Accessibility access..."
-if [[ -t 0 ]]; then
-    read -r
-else
-    read -r < /dev/tty 2>/dev/null || true
-fi
-ok "Accessibility — done"
 
 # --- Microphone ---
+printf "  ${BOLD}1. Microphone access${RESET}\n"
+printf "  → A system dialog should appear. Click ${BOLD}OK${RESET} to allow.\n"
 printf "\n"
-printf "  ${BLUE}${BOLD}Opening Microphone settings...${RESET}\n"
-printf "  → Toggle ON microphone access for ${BOLD}${TERM_APP}${RESET}.\n"
-open "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone" 2>/dev/null || \
-    open "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Microphone" 2>/dev/null || true
 
-printf "  Press ${BOLD}Enter${RESET} once you've granted Microphone access..."
+# Trigger the mic permission dialog by doing a quick recording.
+# macOS auto-prompts "Terminal wants to access your microphone."
+"$VENV_DIR/bin/python" -c "
+import sounddevice as sd, time
+try:
+    stream = sd.InputStream(samplerate=16000, channels=1, dtype='int16', blocksize=480)
+    stream.start()
+    time.sleep(0.3)
+    stream.stop()
+    stream.close()
+except Exception:
+    pass
+" 2>/dev/null
+
+printf "  Press ${BOLD}Enter${RESET} after allowing microphone access..."
 if [[ -t 0 ]]; then
     read -r
 else
     read -r < /dev/tty 2>/dev/null || true
 fi
 ok "Microphone — done"
+
+# --- Accessibility ---
+printf "\n"
+printf "  ${BOLD}2. Accessibility access${RESET} (for pasting text into apps)\n"
+printf "  → A system dialog should appear. Click ${BOLD}Open System Settings${RESET},\n"
+printf "    then toggle ${BOLD}${TERM_APP}${RESET} ON.\n"
+printf "\n"
+
+# Trigger the accessibility permission dialog by attempting a CGEvent.
+# macOS auto-prompts with a dialog pointing to the right Settings page.
+"$VENV_DIR/bin/python" -c "
+try:
+    import Quartz
+    event = Quartz.CGEventCreateKeyboardEvent(None, 0, True)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+except Exception:
+    pass
+" 2>/dev/null
+
+printf "  Press ${BOLD}Enter${RESET} after enabling Accessibility for ${BOLD}${TERM_APP}${RESET}..."
+if [[ -t 0 ]]; then
+    read -r
+else
+    read -r < /dev/tty 2>/dev/null || true
+fi
+ok "Accessibility — done"
 
 # ===========================================================================
 # Step 12: Set up hotkey
