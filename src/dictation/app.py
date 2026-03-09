@@ -154,14 +154,25 @@ def main() -> None:
                 if head_energy > body_energy * 2.5 and head_energy > 500:
                     audio = audio[trim_samples:]
 
+            # Audio preprocessing: noise gate + gain normalization
+            audio_f = audio.astype(np.float32)
+            # Noise gate: zero out samples below a threshold to remove background hiss
+            noise_floor = np.percentile(np.abs(audio_f), 10)
+            gate_threshold = max(noise_floor * 3, 50.0)
+            audio_f[np.abs(audio_f) < gate_threshold] = 0.0
+            # Gain normalization: scale audio to use more of the int16 range
+            peak = np.max(np.abs(audio_f))
+            if peak > 0:
+                target_peak = 28000.0  # ~85% of int16 max, avoid clipping
+                audio_f = audio_f * (target_peak / peak)
+            audio = audio_f.clip(-32767, 32767).astype(np.int16)
+
             duration_s = len(audio) / cfg["audio"]["sample_rate"]
             print(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")
 
             latency.start_pipeline()
 
-            # Build Whisper initial prompt from dictionary terms ONLY.
-            # Do NOT include recent utterances — Whisper hallucinates from them
-            # when audio is unclear, producing the previous text instead of new speech.
+            # Whisper initial prompt: dictionary terms bias the decoder
             whisper_prompt = dictionary["whisper_hint"] if dictionary["whisper_hint"] else None
 
             # ASR

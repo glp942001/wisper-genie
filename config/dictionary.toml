@@ -2,25 +2,33 @@
 # Add names, jargon, acronyms, and technical terms the ASR and LLM should know.
 #
 # These terms are:
-#   1. Injected into the LLM prompt so it spells them correctly
-#   2. Fed to Whisper as context to improve recognition accuracy
+#   1. Fed to Whisper as initial_prompt to bias recognition
+#   2. Injected into the LLM prompt for spelling correction
 #
 # Uncomment and add your own terms below.
 
-# Proper names (people, places, brands)
+# Proper names (people, places, brands, products)
 names = [
+    "Wispr Flow", "Superwhisper", "Whisper",
+    "Gmail", "Slack", "Notion", "Discord", "LinkedIn",
+    "Google", "Apple", "Amazon", "Microsoft",
+    "GitHub", "GitLab", "Jira", "Confluence",
+    # Add your team members, company name, etc:
     # "Supabase",
     # "Vercel",
 ]
 
 # Technical terms, acronyms, jargon
 terms = [
-    "API", "JSON", "AWS", "OAuth",
-    "Kubernetes", "kubectl", "Docker",
-    "PostgreSQL", "Redis", "FastAPI",
-    "latency", "average", "throughput", "endpoint",
-    "deployment", "repository", "microservice",
+    "API", "JSON", "AWS", "OAuth", "OAuth2", "SSO",
+    "Kubernetes", "kubectl", "Docker", "Terraform",
+    "PostgreSQL", "Redis", "FastAPI", "GraphQL", "REST",
+    "Lambda", "EC2", "S3", "CloudFront", "DynamoDB",
+    "CI/CD", "DevOps", "microservice", "endpoint",
+    "latency", "throughput", "deployment", "repository",
+    "pull request", "merge request", "code review",
+    "sprint", "standup", "retrospective", "backlog",
 ]
 
 # Abbreviations and their expansions (for future use)
-# abbreviations = { "k8s" = "Kubernetes", "tf" = "Terraform" }
+# abbreviations = { "k8s" = "Kubernetes", "tf" = "Terraform", "PR" = "pull request" }

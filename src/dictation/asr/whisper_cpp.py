@@ -57,6 +57,8 @@ class WhisperCppAdapter:
             print_special=False,
             single_segment=True,
             no_context=True,
+            beam_size=5,
+            best_of=3,
         )
 
     def transcribe(self, audio: np.ndarray, initial_prompt: str | None = None) -> str:

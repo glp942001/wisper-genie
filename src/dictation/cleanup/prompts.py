@@ -95,7 +95,11 @@ def build_cleanup_system(context: dict | None = None) -> str:
 
         dict_hint = context.get("dictionary_hint", "")
         if dict_hint:
-            parts.append(f"\n{dict_hint}")
+            parts.append(
+                f"\n{dict_hint}\n"
+                "If the transcript contains words that sound similar to any of these terms, "
+                "correct the spelling to match the vocabulary above."
+            )
 
         if context.get("has_backtrack"):
             parts.append(
