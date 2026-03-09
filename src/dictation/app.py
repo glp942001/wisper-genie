@@ -1,7 +1,16 @@
-"""Main entry point — pipeline orchestrator with push-to-talk."""
+"""Main entry point — pipeline orchestrator with push-to-talk.
+
+Audio architecture (Wispr Flow-style):
+  - Mic stream runs permanently from startup
+  - A rolling buffer always holds the last ~500ms of audio (pre-buffer)
+  - On key press: pre-buffer is captured + new frames are collected
+  - On key release: VAD trims silence, audio sent to ASR
+  - No stream open/close per recording — instant, reliable
+"""
 
 from __future__ import annotations
 
+import collections
 import io
 import os
 import sys
@@ -25,13 +34,11 @@ VERBOSE = "--verbose" in sys.argv or "--debug" in sys.argv or "-v" in sys.argv
 
 
 def _log(msg: str) -> None:
-    """Print only in verbose mode."""
     if VERBOSE:
         print(msg)
 
 
 def _progress(step: str, done: bool = False) -> None:
-    """Print a compact progress line."""
     if done:
         print(f"  ✔ {step}")
     else:
@@ -43,7 +50,6 @@ def _progress_done() -> None:
 
 
 def load_config(path: Path | None = None) -> dict:
-    """Load configuration from TOML file."""
     if path is None:
         path = Path(__file__).resolve().parents[2] / "config" / "default.toml"
     with open(path, "rb") as f:
@@ -51,7 +57,6 @@ def load_config(path: Path | None = None) -> dict:
 
 
 def main() -> None:
-    """Run the dictation pipeline."""
     import AppKit
     from pynput import keyboard
 
@@ -65,14 +70,14 @@ def main() -> None:
     from dictation.transcript.buffer import TranscriptBuffer
 
     cfg = load_config()
-
-    # Resolve model path relative to project root
     project_root = Path(__file__).resolve().parents[2]
     model_path = project_root / cfg["asr"]["model_path"]
+    sample_rate = cfg["audio"]["sample_rate"]
+    frame_ms = cfg["vad"]["frame_size_ms"]
+    frame_size = int(sample_rate * frame_ms / 1000)
 
     # Suppress whisper.cpp verbose output unless --verbose
     if not VERBOSE:
-        # Redirect C-level stderr during model load to suppress whisper logs
         _stderr_fd = os.dup(2)
         _devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(_devnull, 2)
@@ -85,25 +90,20 @@ def main() -> None:
 
     # --- Initialize components ---
     _progress("Loading speech model")
-    asr = WhisperCppAdapter(
-        model_path=model_path,
-        language=cfg["asr"]["language"],
-    )
+    asr = WhisperCppAdapter(model_path=model_path, language=cfg["asr"]["language"])
     asr.load()
     asr.transcribe(np.zeros(16000, dtype=np.int16))
     _progress_done()
 
     _progress("Initializing microphone")
     mic = MicCapture(
-        sample_rate=cfg["audio"]["sample_rate"],
+        sample_rate=sample_rate,
         channels=cfg["audio"]["channels"],
-        frame_duration_ms=cfg["vad"]["frame_size_ms"],
+        frame_duration_ms=frame_ms,
         device=cfg["audio"].get("device"),
         dtype=cfg["audio"]["dtype"],
     )
-    # Keep mic stream running permanently — never open/close per recording.
-    # This eliminates CoreAudio cold-start issues entirely.
-    mic.start()
+    mic.start()  # Permanent — never closed until shutdown
     _progress_done()
 
     _progress("Loading dictionary")
@@ -122,34 +122,26 @@ def main() -> None:
     if not warmup_ok:
         print("  ⚠ Cleanup LLM unavailable — dictation works but without AI formatting.")
 
-    # Restore stderr if we suppressed it
     if not VERBOSE:
         os.dup2(_stderr_fd, 2)
         os.close(_devnull)
         os.close(_stderr_fd)
 
-    # Pre-load audio cues
+    # Audio cues
     sound_start = AppKit.NSSound.alloc().initWithContentsOfFile_byReference_(
-        "/System/Library/Sounds/Purr.aiff", True
-    )
+        "/System/Library/Sounds/Purr.aiff", True)
     sound_stop = AppKit.NSSound.alloc().initWithContentsOfFile_byReference_(
-        "/System/Library/Sounds/Purr.aiff", True
-    )
+        "/System/Library/Sounds/Purr.aiff", True)
     sound_error = AppKit.NSSound.alloc().initWithContentsOfFile_byReference_(
-        "/System/Library/Sounds/Basso.aiff", True
-    )
+        "/System/Library/Sounds/Basso.aiff", True)
 
     def play_sound(sound: AppKit.NSSound) -> None:
-        """Play a sound without blocking the calling thread."""
         def _play() -> None:
             sound.stop()
             sound.play()
         threading.Thread(target=_play, daemon=True).start()
 
-    injector = ClipboardInjector(
-        paste_delay_ms=cfg["output"]["paste_delay_ms"],
-    )
-
+    injector = ClipboardInjector(paste_delay_ms=cfg["output"]["paste_delay_ms"])
     latency = LatencyTracker(
         budgets={
             "asr": cfg["latency"]["asr_budget_ms"],
@@ -159,17 +151,50 @@ def main() -> None:
         total_budget_ms=cfg["latency"]["total_budget_ms"],
     )
 
-    # --- State (all access protected by a single lock) ---
+    # =====================================================================
+    # Rolling audio buffer (Wispr Flow-style)
+    # =====================================================================
+    # Always holds the last ~500ms of audio from the mic, even when not
+    # recording. When the user presses the hotkey, these pre-buffered
+    # frames are included — capturing speech that started just before
+    # the keypress. This eliminates the "missed first word" problem.
+    PRE_BUFFER_MS = 500
+    pre_buffer_size = int(PRE_BUFFER_MS / frame_ms)  # ~17 frames at 30ms
+    pre_buffer: collections.deque[np.ndarray] = collections.deque(maxlen=pre_buffer_size)
+
+    # --- Shared state ---
     lock = threading.Lock()
     pressed_keys: set = set()
     recording = False
     recorded_frames: list[np.ndarray] = []
     utterance_id = 0
-    recording_event = threading.Event()
     shutdown_event = threading.Event()
 
+    # =====================================================================
+    # Audio capture loop — always running, feeds rolling buffer + recording
+    # =====================================================================
+    def capture_loop() -> None:
+        while not shutdown_event.is_set():
+            try:
+                frame = mic.read(timeout=0.05)
+                if frame is None:
+                    continue
+                with lock:
+                    if recording:
+                        recorded_frames.append(frame)
+                    else:
+                        pre_buffer.append(frame)
+            except Exception as exc:
+                _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
+                time.sleep(0.05)
+
+    capture_thread = threading.Thread(target=capture_loop, daemon=True)
+    capture_thread.start()
+
+    # =====================================================================
+    # Pipeline
+    # =====================================================================
     def process_utterance(frames: list[np.ndarray], uid: int) -> None:
-        """Process recorded audio through the full pipeline."""
         try:
             if not frames:
                 print("  ⚠ No audio captured. Try holding the key a bit longer.")
@@ -177,34 +202,47 @@ def main() -> None:
 
             audio = np.concatenate(frames).ravel()
 
-            # Smart trim: only remove the first 300ms if it contains
-            # the push-to-talk start sound (high energy burst).
-            trim_samples = int(0.3 * cfg["audio"]["sample_rate"])
-            if len(audio) > trim_samples * 2:
-                head_energy = np.abs(audio[:trim_samples].astype(np.float32)).mean()
-                body_energy = np.abs(audio[trim_samples:trim_samples * 3].astype(np.float32)).mean()
-                if head_energy > body_energy * 2.5 and head_energy > 500:
-                    audio = audio[trim_samples:]
+            # VAD-style silence trimming: find where speech starts/ends
+            # by looking at energy in 30ms windows
+            energy_per_frame = []
+            for i in range(0, len(audio) - frame_size, frame_size):
+                chunk = audio[i:i + frame_size].astype(np.float32)
+                energy_per_frame.append(np.abs(chunk).mean())
 
-            # Audio preprocessing: noise gate + gain normalization
+            if energy_per_frame:
+                threshold = max(np.percentile(energy_per_frame, 20) * 3, 100)
+                # Find first frame above threshold
+                start_idx = 0
+                for i, e in enumerate(energy_per_frame):
+                    if e > threshold:
+                        start_idx = max(0, i - 2)  # keep 2 frames before speech
+                        break
+                # Find last frame above threshold
+                end_idx = len(energy_per_frame)
+                for i in range(len(energy_per_frame) - 1, -1, -1):
+                    if energy_per_frame[i] > threshold:
+                        end_idx = min(len(energy_per_frame), i + 3)  # keep 3 after
+                        break
+                audio = audio[start_idx * frame_size:end_idx * frame_size]
+
+            if len(audio) < sample_rate * 0.1:  # less than 100ms
+                print("  ⚠ Recording too short.")
+                return
+
+            # Gain normalization
             audio_f = audio.astype(np.float32)
-            noise_floor = np.percentile(np.abs(audio_f), 10)
-            gate_threshold = max(noise_floor * 3, 50.0)
-            audio_f[np.abs(audio_f) < gate_threshold] = 0.0
             peak = np.max(np.abs(audio_f))
             if peak > 0:
-                target_peak = 28000.0
-                audio_f = audio_f * (target_peak / peak)
+                audio_f = audio_f * (28000.0 / peak)
             audio = audio_f.clip(-32767, 32767).astype(np.int16)
 
-            duration_s = len(audio) / cfg["audio"]["sample_rate"]
-            _log(f"\n[Pipeline] Processing {duration_s:.1f}s of audio...")
+            duration_s = len(audio) / sample_rate
+            _log(f"[Pipeline] Processing {duration_s:.1f}s of audio...")
 
             latency.start_pipeline()
 
             whisper_prompt = dictionary["whisper_hint"] if dictionary["whisper_hint"] else None
 
-            # ASR
             with latency.track("asr"):
                 raw_text = asr.transcribe(audio, initial_prompt=whisper_prompt)
 
@@ -214,13 +252,11 @@ def main() -> None:
 
             _log(f"[ASR] Raw: {raw_text}")
 
-            # Early cancellation check
             with lock:
                 if uid != utterance_id:
                     _log("[Pipeline] Cancelled — new recording started.")
                     return
 
-            # Transcript normalization
             with latency.track("normalize"):
                 normalized, has_backtrack = transcript_buf.add(raw_text)
 
@@ -230,7 +266,6 @@ def main() -> None:
 
             _log(f"[Normalize] {normalized}" + (" [BACKTRACK]" if has_backtrack else ""))
 
-            # Check for voice commands
             cmd = detect_command(normalized)
             if cmd is not None:
                 _log(f"[Command] Detected: {cmd.action}")
@@ -245,19 +280,16 @@ def main() -> None:
                 "has_backtrack": has_backtrack,
             }
 
-            # LLM cleanup
             with latency.track("cleanup"):
                 cleaned = cleanup.cleanup(normalized, context=cleanup_context)
 
             _log(f"[Cleanup] {cleaned}")
 
-            # Final cancellation check
             with lock:
                 if uid != utterance_id:
                     _log("[Pipeline] Cancelled before injection.")
                     return
 
-            # Injection
             with latency.track("injection"):
                 injector.inject(cleaned)
 
@@ -269,9 +301,11 @@ def main() -> None:
                 print(f"  ✔ \"{cleaned}\" ({total:.0f}ms)")
 
         except Exception as exc:
-            print(f"[Pipeline] ERROR: {type(exc).__name__}: {exc}")
+            print(f"  ⚠ Error: {type(exc).__name__}: {exc}")
 
-    # --- Hotkey handler (push-to-talk) ---
+    # =====================================================================
+    # Hotkey handler
+    # =====================================================================
     hotkey_keys = set()
     _ALT_VARIANTS = {"alt_r", "alt_gr", "alt_l", "alt"}
     for k in cfg["hotkey"]["keys"]:
@@ -289,21 +323,13 @@ def main() -> None:
         sys.exit(1)
 
     def _is_hotkey_match(pressed: set) -> bool:
-        """Check if hotkey is pressed, accounting for alt key variants."""
         if hotkey_keys.issubset(pressed):
             return True
-        pressed_names = set()
-        for k in pressed:
-            if hasattr(k, 'name'):
-                pressed_names.add(k.name)
-        configured_names = set()
-        for k in hotkey_keys:
-            if hasattr(k, 'name'):
-                configured_names.add(k.name)
+        pressed_names = {getattr(k, 'name', None) for k in pressed} - {None}
+        configured_names = {getattr(k, 'name', None) for k in hotkey_keys} - {None}
         for cfg_name in configured_names:
-            if cfg_name in _ALT_VARIANTS:
-                if pressed_names & _ALT_VARIANTS:
-                    return True
+            if cfg_name in _ALT_VARIANTS and pressed_names & _ALT_VARIANTS:
+                return True
         return False
 
     def on_press(key: keyboard.Key | keyboard.KeyCode) -> None:
@@ -317,11 +343,12 @@ def main() -> None:
                 return
             utterance_id += 1
             recording = True
-            recorded_frames = []
+            # Grab the pre-buffer — this captures ~500ms of audio from
+            # BEFORE the keypress, so the first word isn't cut off.
+            recorded_frames = list(pre_buffer)
+            pre_buffer.clear()
 
         play_sound(sound_start)
-        # Mic stream is always running — just start collecting frames
-        recording_event.set()
         print("  🎙️  Recording...")
 
     def on_release(key: keyboard.Key | keyboard.KeyCode) -> None:
@@ -329,8 +356,6 @@ def main() -> None:
 
         with lock:
             pressed_keys.discard(key)
-            # Also discard all alt variants — macOS reports modifier keys
-            # inconsistently (press=alt_r, release=alt), leaving phantom keys.
             if hasattr(key, 'name') and key.name in _ALT_VARIANTS:
                 pressed_keys.difference_update({
                     k for k in list(pressed_keys)
@@ -338,49 +363,15 @@ def main() -> None:
                 })
             if not recording:
                 return
-            # Stop recording — clear pressed_keys to prevent any phantom buildup
             recording = False
             pressed_keys.clear()
             frames = list(recorded_frames)
             recorded_frames = []
             uid = utterance_id
 
-        # Mic stream stays running — just stop collecting frames
-        recording_event.clear()
         play_sound(sound_stop)
         print("  ⏳ Processing...")
         threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
-
-    # --- Audio capture loop ---
-    # Mic stream is always running. This loop drains frames continuously.
-    # When recording=True, frames are stored. When False, frames are
-    # discarded immediately to keep the queue empty for the next recording.
-    def capture_loop() -> None:
-        nonlocal recording
-        while not shutdown_event.is_set():
-            try:
-                with lock:
-                    is_rec = recording
-                if is_rec:
-                    # Recording: read frames one at a time and store them
-                    frame = mic.read(timeout=0.03)
-                    if frame is not None:
-                        with lock:
-                            if recording:
-                                recorded_frames.append(frame)
-                else:
-                    # Not recording: drain ALL queued frames to keep queue empty.
-                    # This ensures when recording starts, the queue has only
-                    # fresh frames — not stale silence from seconds ago.
-                    drained = mic.read_all()
-                    if not drained:
-                        time.sleep(0.03)  # nothing to drain, avoid busy loop
-            except Exception as exc:
-                _log(f"[Capture] ERROR: {type(exc).__name__}: {exc}")
-                time.sleep(0.1)
-
-    capture_thread = threading.Thread(target=capture_loop, daemon=True)
-    capture_thread.start()
 
     # --- Ready ---
     print()
@@ -395,7 +386,6 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
 
-    # --- Shutdown ---
     print("\n  Shutting down...")
     shutdown_event.set()
     mic.stop()
