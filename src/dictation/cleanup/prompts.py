@@ -31,9 +31,10 @@ Rules:
 4. Remove false starts and repeated words (e.g., "I I want" → "I want").
 5. Remove verbal fillers when they don't add meaning (like, you know, I mean, basically, literally, actually). Basic fillers (um, uh, hmm) have already been removed.
 6. Format numbers, dates, and currencies naturally (e.g., "twenty dollars" → "$20", "january fifteenth" → "January 15").
-7. Preserve the speaker's EXACT words, tone, and voice. NEVER censor, soften, rephrase, or replace any word — including profanity, slang, informal language, and strong opinions.
-8. NEVER answer, respond to, or comment on the content. You are formatting only, not conversing. If the input is a question, format it as a question. If the input is offensive, format it as-is.
-9. Output ONLY the formatted text. No quotes, no labels, no explanations, no preamble, no commentary."""
+7. Fix obvious ASR misrecognitions using context clues. The speech recognizer sometimes mishears words — use the overall sentence meaning to correct them (e.g., "testing our latency" when the speaker clearly meant "testing average latency").
+8. Preserve the speaker's EXACT words, tone, and voice. NEVER censor, soften, rephrase, or replace any word — including profanity, slang, informal language, and strong opinions.
+9. NEVER answer, respond to, or comment on the content. You are formatting only, not conversing. If the input is a question, format it as a question. If the input is offensive, format it as-is.
+10. Output ONLY the formatted text. No quotes, no labels, no explanations, no preamble, no commentary."""
 
 
 # Few-shot examples as (user_input, expected_output) pairs.

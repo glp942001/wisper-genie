@@ -10,9 +10,15 @@ import numpy as np
 from pywhispercpp.model import Model as WhisperModel
 
 # Whisper hallucination tokens emitted on silence or near-silence.
-# These should be stripped from output, not passed to the pipeline.
 _HALLUCINATION_PATTERN = re.compile(
     r"\[(?:BLANK_AUDIO|BLANK|SILENCE|MUSIC|APPLAUSE|LAUGHTER)\]",
+    re.IGNORECASE,
+)
+
+# Whisper parenthetical annotations — sound descriptions, not speech.
+# Examples: (air whooshing), (laughing), (sighing), (clapping), (buzzing)
+_ANNOTATION_PATTERN = re.compile(
+    r"\([a-z\s]{2,30}\)",
     re.IGNORECASE,
 )
 
@@ -49,7 +55,7 @@ class WhisperCppAdapter:
             print_realtime=False,
             print_timestamps=False,
             print_special=False,
-            single_segment=False,
+            single_segment=True,
             no_context=False,
         )
 
@@ -85,6 +91,7 @@ class WhisperCppAdapter:
             if not part:
                 continue
             part = _HALLUCINATION_PATTERN.sub("", part).strip()
+            part = _ANNOTATION_PATTERN.sub("", part).strip()
             if part:
                 parts.append(part)
         return " ".join(parts).strip()
