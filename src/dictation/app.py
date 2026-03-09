@@ -162,9 +162,6 @@ def main() -> None:
     pre_buffer_size = int(PRE_BUFFER_MS / frame_ms)  # ~17 frames at 30ms
     pre_buffer: collections.deque[np.ndarray] = collections.deque(maxlen=pre_buffer_size)
 
-    # Max recording: 60 seconds. Prevents unbounded memory growth if
-    # someone holds the key forever. At 30ms frames = ~2000 frames.
-    MAX_RECORDING_FRAMES = int(60_000 / frame_ms)
 
     # --- Shared state ---
     lock = threading.Lock()
@@ -185,8 +182,7 @@ def main() -> None:
                     continue
                 with lock:
                     if recording:
-                        if len(recorded_frames) < MAX_RECORDING_FRAMES:
-                            recorded_frames.append(frame)
+                        recorded_frames.append(frame)
                     else:
                         pre_buffer.append(frame)
             except Exception as exc:
