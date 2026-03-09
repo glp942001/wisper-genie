@@ -131,7 +131,8 @@ class OllamaCleanup:
                     ],
                     "stream": False,
                     "keep_alive": "10m",
-                    "options": {"num_predict": 1},
+                    "think": False,
+                    "options": {"num_predict": 10, "temperature": 0.0},
                 },
             )
             resp.raise_for_status()
