@@ -318,6 +318,9 @@ def main() -> None:
 
         play_sound(sound_start)
         mic.start()
+        # Brief stabilization delay — without this, the first few frames
+        # from a freshly opened stream are often silence/garbage on macOS.
+        time.sleep(0.05)
         recording_event.set()
         _log("\n[Recording] Started — speak now...")
 

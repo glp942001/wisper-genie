@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 
+def _log_mic(msg: str) -> None:
+    """Log mic selection — only visible with --verbose."""
+    import sys
+    if "--verbose" in sys.argv or "--debug" in sys.argv or "-v" in sys.argv:
+        print(f"[MicCapture] {msg}")
+
+
 def auto_select_mic() -> int | None:
     """Pick the best input device, preferring external mics over built-in.
 
@@ -45,16 +52,16 @@ def auto_select_mic() -> int | None:
 
     if bluetooth:
         idx, name = bluetooth[0]
-        print(f"[MicCapture] Auto-selected mic: {name} (device {idx})")
+        _log_mic(f"Auto-selected mic: {name} (device {idx})")
         return idx
     if external:
         idx, name = external[0]
-        print(f"[MicCapture] Auto-selected mic: {name} (device {idx})")
+        _log_mic(f"Auto-selected mic: {name} (device {idx})")
         return idx
 
     # Fall back to system default
     default = sd.query_devices(kind="input")
-    print(f"[MicCapture] Using default mic: {default['name']}")
+    _log_mic(f"Using default mic: {default['name']}")
     return None
 
 

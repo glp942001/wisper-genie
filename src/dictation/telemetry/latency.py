@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from contextlib import contextmanager
 from typing import Generator
+
+_VERBOSE = "--verbose" in sys.argv or "--debug" in sys.argv or "-v" in sys.argv
 
 
 class LatencyTracker:
@@ -48,7 +51,7 @@ class LatencyTracker:
             self._timings[stage] = elapsed_ms
 
             budget = self._budgets.get(stage)
-            if budget is not None and elapsed_ms > budget:
+            if _VERBOSE and budget is not None and elapsed_ms > budget:
                 print(
                     f"[Latency] WARNING: {stage} took {elapsed_ms:.1f}ms "
                     f"(budget: {budget:.0f}ms)"
@@ -61,7 +64,7 @@ class LatencyTracker:
         total_ms = (time.perf_counter() - self._pipeline_start) * 1000
         self._timings["total"] = total_ms
 
-        if total_ms > self._total_budget_ms:
+        if _VERBOSE and total_ms > self._total_budget_ms:
             print(
                 f"[Latency] WARNING: total pipeline took {total_ms:.1f}ms "
                 f"(budget: {self._total_budget_ms:.0f}ms)"

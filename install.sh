@@ -473,57 +473,18 @@ ok "Microphone — done"
 _step=$(( _step + 1 ))
 printf "\n${BLUE}${BOLD}[%d/%d]${RESET} %s\n" "$_step" "$TOTAL_STEPS" "Testing your hotkey..."
 
-printf "\n"
-printf "  Let's make sure your hotkey works.\n"
-printf "  Press and release the ${BOLD}Right Option key${RESET} now...\n"
-printf "\n"
-
-# Use a small Python script to test key detection
-"$VENV_DIR/bin/python" -c "
+# Helper: detect ANY key press within 10 seconds, return its name
+_detect_any_key() {
+    "$VENV_DIR/bin/python" -c "
 import sys, time
 from pynput import keyboard
 
-_ALT_VARIANTS = {'alt_r', 'alt_gr', 'alt_l', 'alt'}
 detected = [False]
 key_name = [None]
 
 def on_press(key):
     name = getattr(key, 'name', None)
-    if name and name in _ALT_VARIANTS:
-        detected[0] = True
-        key_name[0] = name
-        return False  # stop listener
-
-listener = keyboard.Listener(on_press=on_press)
-listener.start()
-
-# Wait up to 10 seconds
-for i in range(100):
-    time.sleep(0.1)
-    if detected[0]:
-        break
-
-listener.stop()
-
-if detected[0]:
-    print(f'DETECTED:{key_name[0]}')
-else:
-    print('TIMEOUT')
-" 2>/dev/null
-HOTKEY_RESULT=$?
-
-# Read the output
-HOTKEY_OUTPUT=$("$VENV_DIR/bin/python" -c "
-import sys, time
-from pynput import keyboard
-
-_ALT_VARIANTS = {'alt_r', 'alt_gr', 'alt_l', 'alt'}
-detected = [False]
-key_name = [None]
-
-def on_press(key):
-    name = getattr(key, 'name', None)
-    if name and name in _ALT_VARIANTS:
+    if name:
         detected[0] = True
         key_name[0] = name
         return False
@@ -536,55 +497,108 @@ for i in range(100):
         break
 listener.stop()
 if detected[0]:
-    print(f'DETECTED:{key_name[0]}')
+    print(key_name[0])
 else:
     print('TIMEOUT')
-" 2>/dev/null)
+" 2>/dev/null
+}
 
-if [[ "$HOTKEY_OUTPUT" == DETECTED:* ]]; then
-    DETECTED_KEY="${HOTKEY_OUTPUT#DETECTED:}"
-    ok "Right Option key detected (reported as: $DETECTED_KEY)"
+CONFIG_FILE="$INSTALL_DIR/config/default.toml"
+
+# Map key names to config values and display names
+_key_config_value() {
+    case "$1" in
+        alt_r|alt_gr)  echo "<alt_r>" ;;
+        alt_l|alt)     echo "<alt_r>" ;;
+        cmd_r)         echo "<cmd_r>" ;;
+        cmd|cmd_l)     echo "<cmd_r>" ;;
+        shift_r)       echo "<shift_r>" ;;
+        ctrl_r)        echo "<ctrl_r>" ;;
+        f18)           echo "<f18>" ;;
+        *)             echo "<$1>" ;;
+    esac
+}
+
+_test_key() {
+    local prompt_name="$1"
+    printf "\n"
+    printf "  Press and release ${BOLD}${prompt_name}${RESET} now...\n"
+    local result
+    result=$(_detect_any_key)
+    echo "$result"
+}
+
+# --- Test Right Option key ---
+printf "\n  Let's make sure your hotkey works.\n"
+DETECTED=$(_test_key "Right Option key")
+
+if [[ "$DETECTED" != "TIMEOUT" ]]; then
+    ok "Key detected: $DETECTED"
+
+    # Check if it's an alt variant (expected for Right Option)
+    case "$DETECTED" in
+        alt_r|alt_gr|alt_l|alt)
+            ok "Right Option key works!"
+            ;;
+        *)
+            warn "That was '$DETECTED', not Right Option."
+            printf "  We'll use '$DETECTED' as your hotkey instead.\n"
+            NEW_KEY=$(_key_config_value "$DETECTED")
+            sed -i '' "s/keys = \\[\"<alt_r>\"\\]/keys = [\"${NEW_KEY}\"]/" "$CONFIG_FILE"
+            ok "Hotkey set to $DETECTED ($NEW_KEY)"
+            ;;
+    esac
 else
-    warn "Right Option key not detected within 10 seconds."
+    warn "No key detected within 10 seconds."
     printf "\n"
-    printf "  You can choose an alternative hotkey:\n"
+    printf "  Choose an alternative hotkey to test:\n"
     printf "\n"
-    printf "    ${BOLD}1)${RESET} Right Option key  (default)\n"
-    printf "    ${BOLD}2)${RESET} Right Command key\n"
-    printf "    ${BOLD}3)${RESET} Right Shift key\n"
-    printf "    ${BOLD}4)${RESET} Right Control key\n"
-    printf "    ${BOLD}5)${RESET} F18 key\n"
-    printf "    ${BOLD}6)${RESET} Keep current setting\n"
+    printf "    ${BOLD}1)${RESET} Right Command key\n"
+    printf "    ${BOLD}2)${RESET} Right Shift key\n"
+    printf "    ${BOLD}3)${RESET} Right Control key\n"
+    printf "    ${BOLD}4)${RESET} Skip (keep Right Option, configure later)\n"
     printf "\n"
-    printf "  Choose [1-6]: "
+    printf "  Choose [1-4]: "
 
     if [[ -t 0 ]]; then
         read -r choice
     else
-        read -r choice < /dev/tty 2>/dev/null || choice="6"
+        read -r choice < /dev/tty 2>/dev/null || choice="4"
     fi
 
-    CONFIG_FILE="$INSTALL_DIR/config/default.toml"
-    case "${choice:-6}" in
-        1) ;; # keep default
+    case "${choice:-4}" in
+        1)
+            DETECTED=$(_test_key "Right Command key")
+            if [[ "$DETECTED" != "TIMEOUT" ]]; then
+                ok "Key detected: $DETECTED"
+                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<cmd_r>"]/' "$CONFIG_FILE"
+                ok "Hotkey set to Right Command key"
+            else
+                warn "Key not detected. You can change hotkey later in config/default.toml."
+            fi
+            ;;
         2)
-            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<cmd_r>"]/' "$CONFIG_FILE"
-            ok "Hotkey set to Right Command key"
+            DETECTED=$(_test_key "Right Shift key")
+            if [[ "$DETECTED" != "TIMEOUT" ]]; then
+                ok "Key detected: $DETECTED"
+                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<shift_r>"]/' "$CONFIG_FILE"
+                ok "Hotkey set to Right Shift key"
+            else
+                warn "Key not detected. You can change hotkey later in config/default.toml."
+            fi
             ;;
         3)
-            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<shift_r>"]/' "$CONFIG_FILE"
-            ok "Hotkey set to Right Shift key"
-            ;;
-        4)
-            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<ctrl_r>"]/' "$CONFIG_FILE"
-            ok "Hotkey set to Right Control key"
-            ;;
-        5)
-            sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<f18>"]/' "$CONFIG_FILE"
-            ok "Hotkey set to F18 key"
+            DETECTED=$(_test_key "Right Control key")
+            if [[ "$DETECTED" != "TIMEOUT" ]]; then
+                ok "Key detected: $DETECTED"
+                sed -i '' 's/keys = \["<alt_r>"\]/keys = ["<ctrl_r>"]/' "$CONFIG_FILE"
+                ok "Hotkey set to Right Control key"
+            else
+                warn "Key not detected. You can change hotkey later in config/default.toml."
+            fi
             ;;
         *)
-            info "Keeping Right Option key. You can change it later in config/default.toml."
+            info "Keeping Right Option key. Change it later in config/default.toml."
             ;;
     esac
 fi
