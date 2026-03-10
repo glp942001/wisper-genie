@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import queue
 import threading
-from typing import TYPE_CHECKING
+import time
+from collections import deque
 
 import numpy as np
 import sounddevice as sd
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
 
 
 def _log_mic(msg: str) -> None:
@@ -21,34 +18,23 @@ def _log_mic(msg: str) -> None:
 
 
 def auto_select_mic() -> int | None:
-    """Pick the best input device, preferring external mics over built-in.
-
-    Priority order:
-      1. AirPods / Bluetooth headsets (name contains "airpod", "beats", "bluetooth")
-      2. Other external mics (USB, headset — any input device that isn't built-in)
-      3. System default input (None)
-
-    Returns the device index, or None for the system default.
-    """
+    """Pick the best input device, preferring external mics over built-in."""
     devices = sd.query_devices()
-    # Skip built-in mics and iPhone Continuity mics (high latency, unreliable)
     skip_keywords = {"macbook", "built-in", "iphone"}
 
     external: list[tuple[int, str]] = []
     bluetooth: list[tuple[int, str]] = []
 
-    for i, dev in enumerate(devices):
-        # Skip output-only devices
+    for idx, dev in enumerate(devices):
         if dev["max_input_channels"] < 1:
             continue
         name_lower = dev["name"].lower()
-        if any(kw in name_lower for kw in skip_keywords):
+        if any(keyword in name_lower for keyword in skip_keywords):
             continue
-        # Classify
-        if any(kw in name_lower for kw in ("airpod", "beats", "bluetooth", "headphone")):
-            bluetooth.append((i, dev["name"]))
+        if any(keyword in name_lower for keyword in ("airpod", "beats", "bluetooth", "headphone")):
+            bluetooth.append((idx, dev["name"]))
         else:
-            external.append((i, dev["name"]))
+            external.append((idx, dev["name"]))
 
     if bluetooth:
         idx, name = bluetooth[0]
@@ -59,18 +45,13 @@ def auto_select_mic() -> int | None:
         _log_mic(f"Auto-selected mic: {name} (device {idx})")
         return idx
 
-    # Fall back to system default
     default = sd.query_devices(kind="input")
     _log_mic(f"Using default mic: {default['name']}")
     return None
 
 
 class MicCapture:
-    """Captures audio from the microphone and feeds frames to a queue.
-
-    Thread-safe: start/stop are protected by an internal lock.
-    Logs dropped frames and device errors for observability.
-    """
+    """Captures audio from the microphone and feeds frames to a ring buffer."""
 
     def __init__(
         self,
@@ -90,14 +71,14 @@ class MicCapture:
             self.device = None
         else:
             self.device = device
-        # 100 frames at 30ms = 3 seconds of buffer. Enough for the capture
-        # loop to keep up, small enough to avoid stale frame buildup.
-        self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=100)
+
+        self._max_buffered_frames = 100
+        self._frames: deque[np.ndarray] = deque(maxlen=self._max_buffered_frames)
         self._stream: sd.InputStream | None = None
         self._running = False
         self._lock = threading.Lock()
+        self._buffer_cv = threading.Condition(self._lock)
 
-        # Observability
         self._frames_dropped = 0
         self._device_errors = 0
         self._last_device_error: str | None = None
@@ -115,27 +96,26 @@ class MicCapture:
             if self._device_errors <= 5 or self._device_errors % 50 == 0:
                 print(f"[MicCapture] Device warning: {status} (count: {self._device_errors})")
             if status.input_overflow:
-                return  # Don't queue corrupted frames
-        try:
-            self._queue.put_nowait(indata.copy())
-        except queue.Full:
-            self._frames_dropped += 1
-            if self._frames_dropped == 1 or self._frames_dropped % 100 == 0:
-                print(f"[MicCapture] WARNING: Dropped {self._frames_dropped} frames total")
+                return
+
+        with self._buffer_cv:
+            if len(self._frames) == self._max_buffered_frames:
+                self._frames.popleft()
+                self._frames_dropped += 1
+                if self._frames_dropped == 1 or self._frames_dropped % 100 == 0:
+                    print(f"[MicCapture] WARNING: Dropped {self._frames_dropped} stale frames total")
+            self._frames.append(indata.copy())
+            self._buffer_cv.notify()
 
     def start(self) -> None:
         """Open the microphone stream."""
         with self._lock:
             if self._running:
                 return
+            self._frames.clear()
             self._frames_dropped = 0
             self._device_errors = 0
-            # Drain any leftover frames from a previous session
-            while not self._queue.empty():
-                try:
-                    self._queue.get_nowait()
-                except queue.Empty:
-                    break
+            self._last_device_error = None
             try:
                 self._stream = sd.InputStream(
                     samplerate=self.sample_rate,
@@ -153,6 +133,7 @@ class MicCapture:
                     "Check that the mic is connected and not in use by another app."
                 ) from exc
             self._running = True
+            self._buffer_cv.notify_all()
 
     def stop(self) -> None:
         """Close the microphone stream."""
@@ -162,29 +143,32 @@ class MicCapture:
                 self._stream.close()
                 self._stream = None
             self._running = False
-        # Drain queue outside lock to avoid deadlock
-        while not self._queue.empty():
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
+            self._frames.clear()
+            self._buffer_cv.notify_all()
+
+    def restart(self) -> None:
+        """Restart the input stream after repeated read stalls or device errors."""
+        self.stop()
+        time.sleep(0.1)
+        self.start()
 
     def read(self, timeout: float = 1.0) -> np.ndarray | None:
         """Read the next audio frame. Returns None on timeout."""
-        try:
-            return self._queue.get(timeout=timeout)
-        except queue.Empty:
-            return None
+        deadline = time.monotonic() + timeout
+        with self._buffer_cv:
+            while not self._frames:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return None
+                self._buffer_cv.wait(timeout=remaining)
+            return self._frames.popleft()
 
     def read_all(self) -> list[np.ndarray]:
-        """Drain all available frames from the queue without blocking."""
-        frames = []
-        while True:
-            try:
-                frames.append(self._queue.get_nowait())
-            except queue.Empty:
-                break
-        return frames
+        """Drain all available frames from the buffer without blocking."""
+        with self._buffer_cv:
+            frames = list(self._frames)
+            self._frames.clear()
+            return frames
 
     @property
     def is_running(self) -> bool:
@@ -193,11 +177,13 @@ class MicCapture:
     @property
     def stats(self) -> dict:
         """Return capture health stats."""
-        return {
-            "frames_dropped": self._frames_dropped,
-            "device_errors": self._device_errors,
-            "last_device_error": self._last_device_error,
-        }
+        with self._lock:
+            return {
+                "buffered_frames": len(self._frames),
+                "frames_dropped": self._frames_dropped,
+                "device_errors": self._device_errors,
+                "last_device_error": self._last_device_error,
+            }
 
     @staticmethod
     def list_devices() -> str:

@@ -6,14 +6,15 @@ dtype = "int16"
 device = "auto"
 # Frame size in ms for audio capture
 frame_size_ms = 30
+normalize_target_peak = 28000
+normalize_max_gain = 4.0
+normalize_min_rms = 250
+capture_restart_timeout_ms = 2000
 
 [vad]
-# Silero VAD parameters (reserved for future use)
-threshold = 0.5
-# Minimum silence duration (ms) to confirm endpoint
-silence_duration_ms = 300
-# Frame size in ms (Silero expects 30ms)
 frame_size_ms = 30
+pre_speech_frames = 2
+post_speech_frames = 3
 
 [asr]
 backend = "whisper_cpp"

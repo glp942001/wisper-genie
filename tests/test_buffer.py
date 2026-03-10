@@ -1,10 +1,12 @@
 """Tests for transcript buffer."""
 
+import threading
+
 from dictation.transcript.buffer import (
-    TranscriptBuffer,
-    MAX_HISTORY,
     DICTATION_COMMANDS,
     DICTATION_COMMANDS_END_ONLY,
+    MAX_HISTORY,
+    TranscriptBuffer,
 )
 
 
@@ -24,7 +26,6 @@ class TestTranscriptBuffer:
         assert "world" in text
 
     def test_keeps_intentional_words(self):
-        """Words like 'like', 'so', 'well' should NOT be stripped."""
         buf = TranscriptBuffer(strip_fillers=True)
         assert "like" in buf.add("I like this")[0]
         assert "so" in buf.add("so we went home")[0]
@@ -36,13 +37,11 @@ class TestTranscriptBuffer:
         assert text == "hello world."
 
     def test_dictation_command_comma_end_of_text(self):
-        """Single-word commands like 'comma' only trigger at end of text."""
         buf = TranscriptBuffer()
         text, _ = buf.add("first second third comma")
         assert text == "first second third,"
 
     def test_dictation_command_comma_mid_text_preserved(self):
-        """'comma' mid-text should NOT trigger — avoids false positives."""
         buf = TranscriptBuffer()
         text, _ = buf.add("first comma second comma third")
         assert text == "first comma second comma third"
@@ -77,18 +76,25 @@ class TestTranscriptBuffer:
         assert buf.add("")[0] == ""
         assert buf.add("   ")[0] == ""
 
-    def test_history_tracking(self):
+    def test_history_tracking_uses_finalized_text(self):
         buf = TranscriptBuffer()
-        buf.add("first")
-        buf.add("second")
-        buf.add("third")
+        buf.commit("first")
+        buf.commit("second")
+        buf.commit("third")
         assert buf.get_history() == ["first", "second", "third"]
         assert buf.get_last(2) == ["second", "third"]
 
-    def test_context_returns_recent_utterances(self):
+    def test_add_does_not_pollute_context_history(self):
         buf = TranscriptBuffer()
-        buf.add("I went to the store")
-        buf.add("Then I came home")
+        buf.add("raw text that should not persist yet")
+        assert buf.get_history() == []
+        buf.commit("final text")
+        assert buf.get_history() == ["final text"]
+
+    def test_context_returns_recent_finalized_utterances(self):
+        buf = TranscriptBuffer()
+        buf.commit("I went to the store")
+        buf.commit("Then I came home")
         context = buf.get_context(n=2)
         assert "I went to the store" in context
         assert "Then I came home" in context
@@ -99,7 +105,7 @@ class TestTranscriptBuffer:
 
     def test_clear(self):
         buf = TranscriptBuffer()
-        buf.add("hello")
+        buf.commit("hello")
         buf.clear()
         assert buf.get_history() == []
 
@@ -109,54 +115,48 @@ class TestTranscriptBuffer:
         assert text == ""
 
     def test_no_false_positive_on_common_words(self):
-        """Words like 'period', 'dash', 'colon' mid-text should NOT convert."""
         buf = TranscriptBuffer()
         assert buf.add("I have a period every month")[0] == "I have a period every month"
         assert buf.add("a dash of salt")[0] == "a dash of salt"
         assert buf.add("the colon is important")[0] == "the colon is important"
 
     def test_end_only_commands_at_end(self):
-        """Single-word commands at end of text should convert."""
         buf = TranscriptBuffer()
         assert buf.add("hello world period")[0] == "hello world."
         assert buf.add("one two three ellipsis")[0] == "one two three..."
 
     def test_history_bounded(self):
-        """Utterance history should not grow beyond MAX_HISTORY."""
         buf = TranscriptBuffer()
         for i in range(MAX_HISTORY + 20):
-            buf.add(f"utterance {i}")
+            buf.commit(f"utterance {i}")
         assert len(buf.get_history()) == MAX_HISTORY
 
     def test_thread_safe_access(self):
-        """Basic smoke test that concurrent access doesn't crash."""
-        import threading
         buf = TranscriptBuffer()
         errors = []
 
         def writer():
             try:
                 for i in range(50):
-                    buf.add(f"text {i}")
-            except Exception as e:
-                errors.append(e)
+                    buf.commit(f"text {i}")
+            except Exception as exc:
+                errors.append(exc)
 
         def reader():
             try:
                 for _ in range(50):
                     buf.get_context(n=2)
                     buf.get_history()
-            except Exception as e:
-                errors.append(e)
+            except Exception as exc:
+                errors.append(exc)
 
         threads = [threading.Thread(target=writer), threading.Thread(target=reader)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
         assert len(errors) == 0
 
-    # --- Backtrack detection ---
     def test_backtrack_detected(self):
         buf = TranscriptBuffer()
         _, bt = buf.add("lets meet at two actually three")
@@ -172,8 +172,7 @@ class TestTranscriptBuffer:
         _, bt = buf.add("hello world how are you")
         assert bt is False
 
-    def test_actually_intentional_still_detects(self):
-        """'actually' always sets backtrack flag — LLM decides if it's a correction."""
+    def test_actually_intentional_not_treated_as_backtrack(self):
         buf = TranscriptBuffer()
         _, bt = buf.add("it was actually good")
-        assert bt is True
+        assert bt is False

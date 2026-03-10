@@ -1,6 +1,8 @@
 """Tests for voice command handler."""
 
-from dictation.commands.handler import detect_command, CommandResult
+from unittest.mock import patch
+
+from dictation.commands.handler import detect_command, execute_command
 
 
 class TestDetectCommand:
@@ -55,3 +57,14 @@ class TestDetectCommand:
         assert detect_command("DELETE THAT") is not None
         assert detect_command("Undo That") is not None
         assert detect_command("REPLACE foo WITH bar") is not None
+
+
+class TestExecuteCommand:
+    @patch("dictation.commands.handler.replace_text_in_focused_element")
+    def test_replace_uses_safe_replacement_helper(self, mock_replace):
+        mock_replace.return_value = (True, "")
+        cmd = detect_command("replace hello with goodbye")
+
+        assert cmd is not None
+        assert execute_command(cmd) is True
+        mock_replace.assert_called_once_with("hello", "goodbye")

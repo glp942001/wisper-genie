@@ -60,7 +60,7 @@ def mock_asr():
 def mock_cleanup():
     """A mock cleanup adapter (passthrough)."""
     mock = MagicMock()
-    mock.cleanup.side_effect = lambda text: text
+    mock.cleanup.side_effect = lambda text, context=None: text
     return mock
 
 

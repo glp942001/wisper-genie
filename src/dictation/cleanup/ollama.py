@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from dictation.cleanup.prompts import (
@@ -9,6 +11,16 @@ from dictation.cleanup.prompts import (
     build_cleanup_system,
     build_few_shot_messages,
 )
+
+_TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {
+        token.lower()
+        for token in _TOKEN_RE.findall(text)
+        if any(ch.isalpha() for ch in token)
+    }
 
 
 class OllamaCleanup:
@@ -109,6 +121,19 @@ class OllamaCleanup:
             if any(sig in cleaned_lower for sig in commentary_signals):
                 print(f"[OllamaCleanup] LLM commented instead of formatting — using raw transcript.")
                 return raw_transcript
+
+            raw_tokens = _content_tokens(raw_transcript)
+            cleaned_tokens = _content_tokens(cleaned)
+            has_backtrack = bool(context and context.get("has_backtrack"))
+            if not has_backtrack and len(raw_tokens) >= 3:
+                preserved = sum(1 for token in raw_tokens if token in cleaned_tokens)
+                preservation_ratio = preserved / len(raw_tokens)
+                if preservation_ratio < 0.5:
+                    print(
+                        "[OllamaCleanup] LLM changed too much content "
+                        f"({preservation_ratio:.2f} preservation) — using raw transcript."
+                    )
+                    return raw_transcript
             return cleaned
         except Exception as exc:
             print(f"[OllamaCleanup] Fail-open ({type(exc).__name__}): {exc}")

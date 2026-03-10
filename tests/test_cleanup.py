@@ -42,6 +42,27 @@ class TestPrompts:
         msg = build_cleanup_message("and then I left")
         assert msg == "and then I left"
 
+    def test_system_prompt_includes_context_hints(self):
+        system = build_cleanup_system(
+            {
+                "app_name": "Slack",
+                "field_text": "following up on the launch timing",
+                "recent_utterances": ["let's keep it short", "mention the beta users"],
+                "dictionary_hint": "Custom vocabulary: Ollama, Whisper",
+                "has_backtrack": True,
+            }
+        )
+        assert "Slack" in system
+        assert "launch timing" in system
+        assert "beta users" in system
+        assert "Ollama" in system
+        assert "corrected themselves" in system
+
+    def test_system_prompt_uses_code_app_instruction(self):
+        system = build_cleanup_system({"app_name": "Cursor"})
+        assert "code/editor style" in system.lower()
+        assert "technical casing" in system.lower()
+
 
 class TestOllamaCleanup:
     def test_empty_input_passthrough(self):
@@ -119,6 +140,52 @@ class TestOllamaCleanup:
         last_user_msg = messages[-1]["content"]
         assert last_user_msg == "and then i left"
         assert "Context:" not in last_user_msg
+
+    @patch("dictation.cleanup.ollama.httpx.Client")
+    def test_context_is_embedded_in_system_prompt(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": "I'll send the update soon."}
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        cleanup = OllamaCleanup()
+        cleanup._client = mock_client
+        cleanup.cleanup(
+            "ill send the update soon",
+            context={
+                "app_name": "Mail",
+                "field_text": "thanks again for the quick turnaround",
+                "recent_utterances": ["we should sound polished here"],
+                "dictionary_hint": "Custom vocabulary: Ollama",
+            },
+        )
+
+        call_args = mock_client.post.call_args
+        system_msg = call_args[1]["json"]["messages"][0]["content"]
+        assert "Mail" in system_msg
+        assert "turnaround" in system_msg
+        assert "polished" in system_msg
+        assert "Ollama" in system_msg
+
+    @patch("dictation.cleanup.ollama.httpx.Client")
+    def test_divergent_output_falls_back_to_raw(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": "Please review the attached project plan and share feedback tomorrow."}
+        }
+        mock_response.raise_for_status.return_value = None
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        cleanup = OllamaCleanup()
+        cleanup._client = mock_client
+        result = cleanup.cleanup("hello world this is a test")
+        assert result == "hello world this is a test"
 
     @patch("dictation.cleanup.ollama.httpx.Client")
     def test_warmup_returns_bool(self, mock_client_cls):

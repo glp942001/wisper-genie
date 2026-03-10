@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-import time
 from dataclasses import dataclass, field
 
-import AppKit
 import Quartz
+
+from dictation.context.screen import replace_text_in_focused_element
 
 
 @dataclass
@@ -14,31 +14,33 @@ class CommandResult:
     args: dict = field(default_factory=dict)
 
 
-# Pre-compiled command patterns — must match the FULL utterance
 _COMMANDS: list[tuple[re.Pattern, str, dict]] = [
     (re.compile(r"^(?:delete that|delete last|scratch that)$", re.IGNORECASE), "delete_last", {}),
     (re.compile(r"^(?:undo that|undo)$", re.IGNORECASE), "undo", {}),
     (re.compile(r"^select all$", re.IGNORECASE), "select_all", {}),
 ]
-_REPLACE_PATTERN = re.compile(
-    r"^replace\s+(.+?)\s+with\s+(.+)$", re.IGNORECASE
-)
+_REPLACE_PATTERN = re.compile(r"^replace\s+(.+?)\s+with\s+(.+)$", re.IGNORECASE)
 
 
 def detect_command(text: str) -> CommandResult | None:
     text = text.strip()
     if not text:
         return None
-    # Strip trailing punctuation that ASR may have added (e.g., "Delete that.")
+
     clean = re.sub(r"[.,!?;:]+$", "", text).strip()
     if not clean:
         return None
+
     for pattern, action, args in _COMMANDS:
         if pattern.match(clean):
             return CommandResult(action=action, args=dict(args))
-    m = _REPLACE_PATTERN.match(clean)
-    if m:
-        return CommandResult(action="replace", args={"find": m.group(1), "replacement": m.group(2)})
+
+    match = _REPLACE_PATTERN.match(clean)
+    if match:
+        return CommandResult(
+            action="replace",
+            args={"find": match.group(1), "replacement": match.group(2)},
+        )
     return None
 
 
@@ -64,21 +66,17 @@ def execute_command(cmd: CommandResult) -> bool:
         if cmd.action in ("delete_last", "undo"):
             _simulate_keystroke(6, cmd_flag)  # Cmd+Z
             return True
-        elif cmd.action == "select_all":
+        if cmd.action == "select_all":
             _simulate_keystroke(0, cmd_flag)  # Cmd+A
             return True
-        elif cmd.action == "replace":
-            # Select all, paste replacement
-            _simulate_keystroke(0, cmd_flag)  # Cmd+A
-            time.sleep(0.05)
-            pb = AppKit.NSPasteboard.generalPasteboard()
-            pb.clearContents()
-            pb.setString_forType_(cmd.args["replacement"], AppKit.NSPasteboardTypeString)
-            time.sleep(0.05)
-            _simulate_keystroke(9, cmd_flag)  # Cmd+V
-            time.sleep(0.05)
-            pb.clearContents()
-            return True
+        if cmd.action == "replace":
+            ok, message = replace_text_in_focused_element(
+                cmd.args["find"],
+                cmd.args["replacement"],
+            )
+            if not ok and message:
+                print(f"[Commands] {message}")
+            return ok
         return False
     except Exception as exc:
         print(f"[Commands] ERROR executing {cmd.action}: {exc}")

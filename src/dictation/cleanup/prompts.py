@@ -9,6 +9,7 @@ Optimized for small LLMs (2B params). Key principles:
 
 from __future__ import annotations
 
+import re
 
 CLEANUP_SYSTEM_BASE = """\
 You clean up dictated speech transcripts. Output ONLY the cleaned text.
@@ -21,13 +22,68 @@ NEVER:
 DO:
 1. Fix capitalization and punctuation
 2. Fix broken contractions (i m → I'm, can t → can't)
-3. Remove repeated words and false starts (I I want → I want)
-4. Remove filler words that add no meaning (like, you know, basically)
-5. Keep the speaker's exact words, tone, and meaning"""
+3. Remove obvious repeated words and false starts (I I want → I want)
+4. Preserve wording unless a spoken correction makes the intent clearer
+5. Keep the speaker's exact tone, technical terms, and meaning"""
+
+_CASUAL_APPS = {
+    "slack", "discord", "messages", "signal", "telegram", "whatsapp",
+}
+_FORMAL_APPS = {
+    "mail", "outlook", "gmail", "linkedin",
+}
+_CODE_APPS = {
+    "code", "visual studio code", "cursor", "windsurf", "xcode",
+    "terminal", "iterm", "iterm2", "warp", "hyper", "kitty",
+}
+_SPACE_RE = re.compile(r"\s+")
 
 
-# 5 carefully chosen examples that teach conservative, minimal cleanup.
-# Each demonstrates a different pattern without encouraging over-editing.
+def _compact_text(text: str, limit: int = 160) -> str:
+    text = _SPACE_RE.sub(" ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[-limit:].lstrip()
+
+
+def _classify_app(app_name: str) -> str:
+    name = app_name.lower().strip()
+    if name in _CASUAL_APPS:
+        return "casual"
+    if name in _FORMAL_APPS:
+        return "formal"
+    if name in _CODE_APPS:
+        return "code"
+    return "neutral"
+
+
+def _build_app_instruction(app_name: str) -> str:
+    if not app_name:
+        return ""
+
+    mode = _classify_app(app_name)
+    if mode == "casual":
+        return (
+            f"Target app: {app_name}. Casual chat style: keep phrasing natural, "
+            "lightly punctuated, and not overly formal."
+        )
+    if mode == "formal":
+        return (
+            f"Target app: {app_name}. Professional writing style: use clean sentence "
+            "boundaries and polished punctuation without changing wording."
+        )
+    if mode == "code":
+        return (
+            f"Target app: {app_name}. Code/editor style: preserve symbols, filenames, "
+            "CLI flags, acronyms, and technical casing exactly."
+        )
+    return (
+        f"Target app: {app_name}. Neutral style: just make the transcript read cleanly."
+    )
+
+
+# Few-shot examples teach conservative, minimal cleanup without encouraging
+# paraphrase-heavy behavior from small local models.
 FEW_SHOT_EXAMPLES: list[tuple[str, str]] = [
     # Short input — capitalize, don't over-punctuate
     ("testing on google", "Testing on Google"),
@@ -37,8 +93,12 @@ FEW_SHOT_EXAMPLES: list[tuple[str, str]] = [
     ("i m going to the store and i can t find my keys", "I'm going to the store and I can't find my keys."),
     # Profanity — preserve verbatim, never censor
     ("this shit is broken again", "This shit is broken again."),
-    # Request — format only, do NOT execute
+    # Request — format only, do NOT execute or paraphrase
     ("look for the AWS lambda docs", "Look for the AWS Lambda docs."),
+    # Correction phrase — keep the final intent
+    ("lets do thursday actually friday afternoon", "Let's do Friday afternoon."),
+    # Code dictation — preserve casing and symbols
+    ("run npm install dash g typescript", "Run npm install -g typescript."),
 ]
 
 
@@ -47,6 +107,28 @@ def build_cleanup_system(context: dict | None = None) -> str:
     parts = [CLEANUP_SYSTEM_BASE]
 
     if context:
+        app_instruction = _build_app_instruction(context.get("app_name", ""))
+        if app_instruction:
+            parts.append(f"\n{app_instruction}")
+
+        field_text = _compact_text(context.get("field_text", ""))
+        if field_text:
+            parts.append(
+                "\nFocused field tail for continuity only: "
+                f"\"{field_text}\""
+            )
+
+        recent_utterances = [
+            _compact_text(item, limit=100)
+            for item in context.get("recent_utterances", [])
+            if isinstance(item, str) and item.strip()
+        ]
+        if recent_utterances:
+            parts.append(
+                "\nRecent dictated context: "
+                + " | ".join(recent_utterances[-3:])
+            )
+
         dict_hint = context.get("dictionary_hint", "")
         if dict_hint:
             parts.append(f"\n{dict_hint}")

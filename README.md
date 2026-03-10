@@ -8,7 +8,7 @@ Everything runs locally on your Mac. No audio leaves your machine.
 
 - **Push-to-talk dictation** — Hold Right Option, speak, release. Text appears instantly.
 - **App-aware formatting** — Detects the active app and adapts tone: casual for Slack, professional for Mail, code-aware for VS Code.
-- **Screen context** — Reads existing text in the focused field so it continues naturally (capitalization, tone, sentence flow).
+- **Screen context** — Reads text near the cursor in the focused field so it continues naturally (capitalization, tone, sentence flow).
 - **Backtrack detection** — Say "actually" or "scratch that" mid-sentence and it rewrites to your corrected intent.
 - **Multi-utterance context** — Remembers your last few utterances so follow-up dictation flows naturally.
 - **Personal dictionary** — Add names, jargon, and acronyms to `config/dictionary.toml` for better recognition.
@@ -72,7 +72,7 @@ wisper-genie uninstall    # Remove Wisper Genie completely
 | "delete that" / "scratch that" | Undo the last paste (Cmd+Z) |
 | "undo" | Undo (Cmd+Z) |
 | "select all" | Select all (Cmd+A) |
-| "replace X with Y" | Replace text |
+| "replace X with Y" | Replace unique text safely, or replace the current selection |
 
 **Dictation commands** (converted to punctuation):
 
@@ -164,16 +164,18 @@ The tool reads the frontmost app via `NSWorkspace` and classifies it:
 
 - **Casual** (Slack, Discord, Messages) — short sentences, contractions, relaxed tone
 - **Formal** (Mail, Outlook, LinkedIn) — complete sentences, professional tone
-- **Code** (VS Code, Cursor, Terminal) — preserves technical terms, backtick formatting
+- **Code** (VS Code, Cursor, Terminal) — preserves technical terms, flags, filenames, and casing
 - **Neutral** (everything else) — balanced formatting
 
 ### Screen context
 
-Using macOS Accessibility APIs, the tool reads the last 200 characters from the focused text field. This lets the LLM:
+Using macOS Accessibility APIs, the tool reads text near the insertion point in the focused field when available. This lets the LLM:
 
 - Continue a sentence without re-capitalizing
 - Match the tone of existing text
 - Avoid re-greeting in replies
+
+For destructive voice commands like "replace X with Y", the app only applies the change when the match is unambiguous or the exact target text is already selected.
 
 ### Fail-open design
 
