@@ -41,6 +41,8 @@ class FocusedTextDetails:
     field_text: str
     selected_text: str
     selected_range: tuple[int, int] | None
+    focused_element: object | None = None
+    app_pid: int | None = None
 
 
 def _warn_once(msg: str) -> None:
@@ -182,6 +184,28 @@ def build_replacement_text(
     return new_text, (start + len(replacement), 0)
 
 
+def build_insertion_text(
+    full_text: str,
+    insertion_text: str,
+    *,
+    selected_range: tuple[int, int] | None = None,
+) -> tuple[str, tuple[int, int]]:
+    """Build a direct text insertion against the current focused value."""
+    if not insertion_text:
+        raise ValueError("Insertion text is empty.")
+    if full_text is None:
+        raise ValueError("Focused field text is unavailable.")
+
+    if not selected_range:
+        start = end = len(full_text)
+    else:
+        start = max(0, selected_range[0])
+        end = min(len(full_text), start + selected_range[1])
+
+    new_text = full_text[:start] + insertion_text + full_text[end:]
+    return new_text, (start + len(insertion_text), 0)
+
+
 def get_focused_text_details(
     *,
     context_chars: int = _MAX_CONTEXT_CHARS,
@@ -201,7 +225,16 @@ def get_focused_text_details(
             field_text="",
             selected_text="",
             selected_range=None,
+            focused_element=None,
+            app_pid=None,
         )
+
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        front_app = workspace.frontmostApplication()
+        app_pid = int(front_app.processIdentifier()) if front_app is not None else None
+    except Exception:
+        app_pid = None
 
     selected_text = _read_text_attribute(focused_element, kAXSelectedTextAttribute)
     selected_range = _read_selected_range(focused_element)
@@ -214,6 +247,8 @@ def get_focused_text_details(
             field_text="",
             selected_text=selected_text[:context_chars],
             selected_range=selected_range,
+            focused_element=focused_element if include_full_text else None,
+            app_pid=app_pid,
         )
 
     try:
@@ -239,6 +274,8 @@ def get_focused_text_details(
         field_text=field_text,
         selected_text=selected_text[:context_chars],
         selected_range=selected_range,
+        focused_element=focused_element if include_full_text else None,
+        app_pid=app_pid,
     )
 
 
@@ -285,6 +322,43 @@ def replace_text_in_focused_element(find_text: str, replacement: str) -> tuple[b
     err = AXUIElementSetAttributeValue(focused_element, kAXValueAttribute, new_text)
     if err != 0:
         return False, "Focused field does not support safe text replacement."
+
+    try:
+        caret_value = AXValueCreate(kAXValueCFRangeType, CFRangeMake(*caret_range))
+        AXUIElementSetAttributeValue(
+            focused_element,
+            kAXSelectedTextRangeAttribute,
+            caret_value,
+        )
+    except Exception:
+        pass
+
+    return True, ""
+
+
+def insert_text_into_focused_element(
+    text: str,
+    *,
+    details: FocusedTextDetails | None = None,
+) -> tuple[bool, str]:
+    """Prefer direct AX text insertion over clipboard paste when supported."""
+    details = details or get_focused_text_details(include_full_text=True)
+    focused_element = details.focused_element or _get_focused_element()
+    if focused_element is None:
+        return False, "No focused text field is available."
+
+    try:
+        new_text, caret_range = build_insertion_text(
+            details.full_text,
+            text,
+            selected_range=details.selected_range,
+        )
+    except ValueError as exc:
+        return False, str(exc)
+
+    err = AXUIElementSetAttributeValue(focused_element, kAXValueAttribute, new_text)
+    if err != 0:
+        return False, "Focused field does not support direct text insertion."
 
     try:
         caret_value = AXValueCreate(kAXValueCFRangeType, CFRangeMake(*caret_range))

@@ -57,8 +57,9 @@ class OllamaCleanup:
 
         Args:
             raw_transcript: The normalized ASR text.
-            context: Optional dict with app_name, field_text,
-                     dictionary_hint, has_backtrack, recent_utterances.
+            context: Optional dict with field_text, selected_text,
+                dictionary_hint, style_hint, has_backtrack,
+                and recent_utterances.
 
         Returns the cleaned text, or the raw transcript on failure.
         """

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import collections
 import os
+import re
 import sys
 import threading
 import time
@@ -30,6 +31,8 @@ else:
 
 # --- Verbose flag ---
 VERBOSE = "--verbose" in sys.argv or "--debug" in sys.argv or "-v" in sys.argv
+_TOKEN_RE = re.compile(r"[A-Za-z0-9']+")
+_PHRASE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'._/-]*")
 
 
 def _log(msg: str) -> None:
@@ -143,21 +146,179 @@ def _normalize_audio(
     return normalized.astype(np.int16)
 
 
+def _tokenize(text: str) -> set[str]:
+    return {token.lower() for token in _TOKEN_RE.findall(text)}
+
+
+def _phrase_tokens(text: str) -> set[str]:
+    return {token.lower() for token in _PHRASE_RE.findall(text) if len(token) >= 3}
+
+
+def _context_tokens(
+    *,
+    field_text: str,
+    selected_text: str,
+    recent_utterances: list[str],
+    dictionary_terms: list[str],
+) -> set[str]:
+    tokens = set()
+    for chunk in [field_text, selected_text, " ".join(recent_utterances), " ".join(dictionary_terms)]:
+        tokens.update(_tokenize(chunk))
+    return tokens
+
+
+def _compact_prompt_fragment(text: str, *, max_words: int = 10, max_chars: int = 96) -> str:
+    words = [word for word in _PHRASE_RE.findall(text) if word]
+    if not words:
+        return ""
+    fragment = " ".join(words[-max_words:])
+    return fragment[-max_chars:].lstrip()
+
+
+def _build_whisper_prompt_variants(
+    *,
+    recent_utterances: list[str],
+    dictionary_hint: str,
+    field_text: str,
+    selected_text: str,
+    max_hypotheses: int,
+) -> list[tuple[str, str | None]]:
+    prompted_variants: list[tuple[str, str | None]] = []
+    seen_prompts: set[str] = set()
+
+    def add(source: str, prompt: str | None) -> None:
+        normalized = (prompt or "").strip()
+        if not normalized:
+            return
+        key = normalized
+        if key in seen_prompts:
+            return
+        seen_prompts.add(key)
+        prompted_variants.append((source, normalized or None))
+
+    add(
+        "prompted_full",
+        _build_whisper_prompt(
+            recent_utterances=recent_utterances,
+            dictionary_hint=dictionary_hint,
+        ),
+    )
+
+    focus_fragment = _compact_prompt_fragment(selected_text or field_text)
+    if focus_fragment:
+        add(
+            "prompted_focus",
+            _build_whisper_prompt(
+                recent_utterances=[focus_fragment],
+                dictionary_hint=dictionary_hint,
+                max_chars=180,
+            ),
+        )
+
+    recent_prompt = _build_whisper_prompt(
+        recent_utterances=recent_utterances,
+        dictionary_hint="",
+        max_chars=160,
+    )
+    add("prompted_recent", recent_prompt)
+
+    add(
+        "prompted_dict",
+        _build_whisper_prompt(
+            recent_utterances=[],
+            dictionary_hint=dictionary_hint,
+            max_chars=180,
+        ),
+    )
+    if max_hypotheses <= 1:
+        return [("unprompted", None)]
+    return prompted_variants[: max_hypotheses - 1] + [("unprompted", None)]
+
+
+def _select_best_candidate(
+    candidates: list,
+    *,
+    field_text: str,
+    selected_text: str,
+    recent_utterances: list[str],
+    dictionary_terms: list[str],
+):
+    context_terms = _context_tokens(
+        field_text=field_text,
+        selected_text=selected_text,
+        recent_utterances=recent_utterances,
+        dictionary_terms=dictionary_terms,
+    )
+    selected_terms = _phrase_tokens(selected_text)
+    field_terms = _phrase_tokens(field_text)
+    history_terms = _phrase_tokens(" ".join(recent_utterances))
+    dict_terms = _phrase_tokens(" ".join(dictionary_terms))
+
+    def score(candidate) -> float:
+        candidate_tokens = _tokenize(candidate.text)
+        candidate_phrases = _phrase_tokens(candidate.text)
+        overlap = 0.0
+        if candidate_tokens and context_terms:
+            overlap = len(candidate_tokens & context_terms) / len(candidate_tokens)
+        selected_overlap = 0.0
+        if candidate_phrases and selected_terms:
+            selected_overlap = len(candidate_phrases & selected_terms) / len(candidate_phrases)
+        field_overlap = 0.0
+        if candidate_phrases and field_terms:
+            field_overlap = len(candidate_phrases & field_terms) / len(candidate_phrases)
+        history_overlap = 0.0
+        if candidate_phrases and history_terms:
+            history_overlap = len(candidate_phrases & history_terms) / len(candidate_phrases)
+        dictionary_overlap = 0.0
+        if candidate_phrases and dict_terms:
+            dictionary_overlap = len(candidate_phrases & dict_terms) / len(candidate_phrases)
+        source_bonus = 0.02 if candidate.source.startswith("prompted") else 0.0
+        return (
+            candidate.confidence * 0.70
+            + overlap * 0.10
+            + selected_overlap * 0.10
+            + field_overlap * 0.04
+            + history_overlap * 0.03
+            + dictionary_overlap * 0.03
+            + source_bonus
+        )
+
+    non_empty = [candidate for candidate in candidates if candidate.text.strip()]
+    if not non_empty:
+        return candidates[0]
+    return max(non_empty, key=score)
+
+
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] in {"autostart", "metrics", "uninstall"}:
+        from dictation.cli import main as cli_main
+
+        cli_main()
+        return
+
     import AppKit
     from pynput import keyboard
 
     from dictation.asr.whisper_cpp import WhisperCppAdapter
     from dictation.audio.capture import MicCapture
+    from dictation.audio.vad import SileroVAD
     from dictation.cleanup.ollama import OllamaCleanup
     from dictation.commands.handler import detect_command, execute_command
+    from dictation.context.cache import ScreenContextCache
     from dictation.context.dictionary import load_dictionary
-    from dictation.context.screen import get_screen_context
+    from dictation.context.style_memory import StyleMemory
     from dictation.output.injector import ClipboardInjector
+    from dictation.output.overlay import GhostPreviewOverlay
     from dictation.telemetry.latency import LatencyTracker
+    from dictation.telemetry.metrics import RoutingMetrics
     from dictation.transcript.buffer import TranscriptBuffer
 
     cfg = load_config()
+    input_cfg = cfg.get("input", {})
+    context_cfg = cfg.get("context", {})
+    preview_cfg = cfg.get("preview", {})
+    routing_cfg = cfg.get("routing", {})
+    metrics_cfg = cfg.get("metrics", {})
     project_root = Path(__file__).resolve().parents[2]
     model_path = project_root / cfg["asr"]["model_path"]
     sample_rate = cfg["audio"]["sample_rate"]
@@ -169,6 +330,18 @@ def main() -> None:
     normalize_max_gain = cfg["audio"].get("normalize_max_gain", 4.0)
     normalize_min_rms = cfg["audio"].get("normalize_min_rms", 250)
     capture_restart_timeout_s = cfg["audio"].get("capture_restart_timeout_ms", 2000) / 1000.0
+    input_mode = input_cfg.get("mode", "push_to_talk")
+    direct_insert_enabled = cfg["output"].get("prefer_direct_insert", True)
+    live_silence_ms = input_cfg.get("live_silence_duration_ms", 450)
+    live_min_frames = max(2, int(input_cfg.get("live_min_utterance_ms", 180) / frame_ms))
+    routing_alt_enabled = routing_cfg.get("alternative_hypotheses_enabled", True)
+    routing_alt_threshold = routing_cfg.get("alternative_hypothesis_threshold", 0.72)
+    routing_max_hypotheses = max(2, int(routing_cfg.get("max_hypotheses", 4)))
+    context_cache_ttl_ms = context_cfg.get("cache_ttl_ms", 1200)
+    preview_before_insert_s = preview_cfg.get("before_insert_delay_ms", 180) / 1000.0
+    metrics_enabled = metrics_cfg.get("enabled", True)
+    typing_fallback_enabled = cfg["output"].get("prefer_typing_fallback", True)
+    typing_max_chars = int(cfg["output"].get("typing_max_chars", 220))
 
     # Suppress whisper.cpp verbose output unless --verbose
     if not VERBOSE:
@@ -203,6 +376,15 @@ def main() -> None:
     _progress("Loading dictionary")
     transcript_buf = TranscriptBuffer()
     dictionary = load_dictionary()
+    style_memory = StyleMemory()
+    context_cache = ScreenContextCache(ttl_ms=context_cache_ttl_ms)
+    routing_metrics = RoutingMetrics() if metrics_enabled else None
+    overlay = GhostPreviewOverlay(
+        enabled=preview_cfg.get("enabled", True),
+        preview_ms=preview_cfg.get("display_ms", 1200),
+        status_ms=preview_cfg.get("status_ms", 500),
+        max_chars=preview_cfg.get("max_chars", 120),
+    )
     _progress_done()
 
     _progress("Warming up AI cleanup")
@@ -215,6 +397,17 @@ def main() -> None:
     _progress_done()
     if not warmup_ok:
         print("  ⚠ Cleanup LLM unavailable — dictation works but without AI formatting.")
+
+    live_vad = None
+    if input_mode == "live":
+        _progress("Loading live-mode VAD")
+        live_vad = SileroVAD(
+            sample_rate=sample_rate,
+            threshold=cfg["vad"].get("threshold", 0.5),
+            silence_duration_ms=live_silence_ms,
+            frame_size_ms=frame_ms,
+        )
+        _progress_done()
 
     if not VERBOSE:
         os.dup2(_stderr_fd, 2)
@@ -232,7 +425,12 @@ def main() -> None:
             sound.play()
         threading.Thread(target=_play, daemon=True).start()
 
-    injector = ClipboardInjector(paste_delay_ms=cfg["output"]["paste_delay_ms"])
+    injector = ClipboardInjector(
+        paste_delay_ms=cfg["output"]["paste_delay_ms"],
+        prefer_direct_insertion=direct_insert_enabled,
+        prefer_typing_fallback=typing_fallback_enabled,
+        typing_max_chars=typing_max_chars,
+    )
     latency_budgets = {
         "asr": cfg["latency"]["asr_budget_ms"],
         "cleanup": cfg["latency"]["cleanup_budget_ms"],
@@ -257,13 +455,40 @@ def main() -> None:
     pressed_keys: set = set()
     recording = False
     recorded_frames: list[np.ndarray] = []
+    recording_source: str | None = None
     utterance_id = 0
     shutdown_event = threading.Event()
+
+    def _prefetch_context() -> None:
+        try:
+            context_cache.prefetch(include_full_text=direct_insert_enabled)
+        except Exception as exc:
+            _log(f"[Context] Prefetch failed: {type(exc).__name__}: {exc}")
+
+    def _persist_post_insert(
+        *,
+        cleaned: str,
+        event: dict | None = None,
+    ) -> None:
+        def _persist() -> None:
+            try:
+                style_memory.observe(cleaned)
+            except Exception as exc:
+                _log(f"[StyleMemory] Persist failed: {type(exc).__name__}: {exc}")
+            if routing_metrics is None or event is None:
+                return
+            try:
+                routing_metrics.record(event)
+            except Exception as exc:
+                _log(f"[Metrics] Persist failed: {type(exc).__name__}: {exc}")
+
+        threading.Thread(target=_persist, daemon=True).start()
 
     # =====================================================================
     # Audio capture loop — always running, feeds rolling buffer + recording
     # =====================================================================
     def capture_loop() -> None:
+        nonlocal recording, recorded_frames, utterance_id, recording_source
         consecutive_timeouts = 0
         last_restart_at = 0.0
         while not shutdown_event.is_set():
@@ -279,6 +504,54 @@ def main() -> None:
                         last_restart_at = now
                     continue
                 consecutive_timeouts = 0
+
+                if input_mode == "live" and live_vad is not None:
+                    with lock:
+                        if recording:
+                            recorded_frames.append(frame)
+                        else:
+                            pre_buffer.append(frame)
+
+                    was_speaking = live_vad.is_speaking
+                    live_vad.process_frame(frame)
+                    is_speaking = live_vad.is_speaking
+
+                    if not was_speaking and is_speaking:
+                        start_live = False
+                        with lock:
+                            if not recording:
+                                utterance_id += 1
+                                recording = True
+                                recording_source = "live"
+                                recorded_frames = list(pre_buffer)
+                                pre_buffer.clear()
+                                start_live = True
+                        if start_live:
+                            injector.clear_clipboard()
+                            _prefetch_context()
+                            overlay.show_status("Listening…")
+
+                    if was_speaking and not is_speaking:
+                        with lock:
+                            if recording and recording_source == "live":
+                                recording = False
+                                recording_source = None
+                                frames = list(recorded_frames)
+                                recorded_frames = []
+                                uid = utterance_id
+                            else:
+                                frames = []
+                                uid = utterance_id
+                        live_vad.reset()
+                        if len(frames) >= live_min_frames:
+                            overlay.show_status("Processing…")
+                            threading.Thread(
+                                target=process_utterance,
+                                args=(frames, uid, "live"),
+                                daemon=True,
+                            ).start()
+                    continue
+
                 with lock:
                     if recording:
                         recorded_frames.append(frame)
@@ -294,7 +567,7 @@ def main() -> None:
     # =====================================================================
     # Pipeline
     # =====================================================================
-    def process_utterance(frames: list[np.ndarray], uid: int) -> None:
+    def process_utterance(frames: list[np.ndarray], uid: int, trigger_mode: str) -> None:
         try:
             latency = LatencyTracker(
                 budgets=latency_budgets,
@@ -328,20 +601,57 @@ def main() -> None:
 
             latency.start_pipeline()
 
+            with latency.track("context"):
+                context_details = context_cache.get(include_full_text=direct_insert_enabled)
+
+            screen_context = {
+                "field_text": context_details.field_text,
+                "selected_text": context_details.selected_text,
+            }
             recent_utterances = transcript_buf.get_last(3)
-            whisper_prompt = _build_whisper_prompt(
+            prompt_variants = _build_whisper_prompt_variants(
                 recent_utterances=recent_utterances,
                 dictionary_hint=dictionary["whisper_hint"],
+                field_text=screen_context["field_text"],
+                selected_text=screen_context["selected_text"],
+                max_hypotheses=routing_max_hypotheses,
             )
 
             with latency.track("asr"):
-                raw_text = asr.transcribe(audio, initial_prompt=whisper_prompt)
+                primary_source, primary_prompt = prompt_variants[0]
+                primary_candidate = asr.transcribe_candidate(
+                    audio,
+                    initial_prompt=primary_prompt,
+                    source=primary_source,
+                )
+                candidates = [primary_candidate]
+                if routing_alt_enabled and primary_candidate.confidence < routing_alt_threshold:
+                    for source, prompt in prompt_variants[1:]:
+                        candidate = asr.transcribe_candidate(
+                            audio,
+                            initial_prompt=prompt,
+                            source=source,
+                        )
+                        if not candidate.text.strip():
+                            continue
+                        if any(existing.text == candidate.text for existing in candidates):
+                            continue
+                        candidates.append(candidate)
+
+                selected_candidate = _select_best_candidate(
+                    candidates,
+                    field_text=screen_context["field_text"],
+                    selected_text=screen_context["selected_text"],
+                    recent_utterances=recent_utterances,
+                    dictionary_terms=dictionary["terms"],
+                )
+                raw_text = selected_candidate.text
 
             if not raw_text.strip():
                 print("  ⚠ No speech detected. Make sure your mic is working.")
                 return
 
-            _log(f"[ASR] Raw: {raw_text}")
+            _log(f"[ASR] Raw: {raw_text} [{selected_candidate.confidence:.2f}]")
 
             with lock:
                 if uid != utterance_id:
@@ -367,10 +677,20 @@ def main() -> None:
                     _log(f"[Pipeline] Command executed in {total:.0f}ms")
                 else:
                     print("  ⚠ Command could not be applied safely.")
+                if routing_metrics is not None:
+                    routing_metrics.record(
+                        {
+                            "event": "command",
+                            "trigger_mode": trigger_mode,
+                            "command": cmd.action,
+                            "asr_confidence": round(selected_candidate.confidence, 3),
+                            "candidate_count": len(candidates),
+                            "candidate_sources": [candidate.source for candidate in candidates],
+                            "selected_candidate": selected_candidate.source,
+                            "timings": latency.timings,
+                        }
+                    )
                 return
-
-            with latency.track("context"):
-                screen_context = get_screen_context()
 
             with lock:
                 if uid != utterance_id:
@@ -378,10 +698,11 @@ def main() -> None:
                     return
 
             cleanup_context = {
-                "app_name": screen_context.get("app_name", ""),
                 "field_text": screen_context.get("field_text", ""),
+                "selected_text": screen_context.get("selected_text", ""),
                 "recent_utterances": recent_utterances,
                 "dictionary_hint": dictionary["prompt_hint"],
+                "style_hint": style_memory.build_prompt_hint(),
                 "has_backtrack": has_backtrack,
             }
 
@@ -395,12 +716,39 @@ def main() -> None:
                     _log("[Pipeline] Cancelled before injection.")
                     return
 
+            with latency.track("preview"):
+                overlay.show_preview(cleaned)
+                if preview_before_insert_s > 0:
+                    time.sleep(preview_before_insert_s)
+                overlay.hide()
+                time.sleep(0.03)
             with latency.track("injection"):
-                injector.inject(cleaned)
+                inject_route = injector.inject(
+                    cleaned,
+                    prefer_direct=direct_insert_enabled,
+                    context_details=context_details,
+                )
+            _log(f"[Injection] Route: {inject_route}")
 
             transcript_buf.commit(cleaned)
-
             total = latency.finish_pipeline()
+            metrics_event = None
+            if routing_metrics is not None:
+                metrics_event = {
+                    "event": "dictation",
+                    "trigger_mode": trigger_mode,
+                    "asr_confidence": round(selected_candidate.confidence, 3),
+                    "candidate_count": len(candidates),
+                    "candidate_sources": [candidate.source for candidate in candidates],
+                    "selected_candidate": selected_candidate.source,
+                    "injection_route": inject_route,
+                    "cleanup_used": True,
+                    "timings": latency.timings,
+                }
+            _persist_post_insert(
+                cleaned=cleaned,
+                event=metrics_event,
+            )
             if VERBOSE:
                 print(latency.summary())
                 _log(f"[Pipeline] Done in {total:.0f}ms")
@@ -440,7 +788,7 @@ def main() -> None:
         return False
 
     def on_press(key: keyboard.Key | keyboard.KeyCode) -> None:
-        nonlocal recording, recorded_frames, utterance_id
+        nonlocal recording, recorded_frames, utterance_id, recording_source
 
         with lock:
             pressed_keys.add(key)
@@ -450,16 +798,20 @@ def main() -> None:
                 return
             utterance_id += 1
             recording = True
+            recording_source = "push_to_talk"
             # Grab the pre-buffer — this captures ~500ms of audio from
             # BEFORE the keypress, so the first word isn't cut off.
             recorded_frames = list(pre_buffer)
             pre_buffer.clear()
 
+        injector.clear_clipboard()
+        _prefetch_context()
         play_sound(sound_start)
+        overlay.show_status("Recording…")
         print("  🎙️  Recording...")
 
     def on_release(key: keyboard.Key | keyboard.KeyCode) -> None:
-        nonlocal recording, recorded_frames
+        nonlocal recording, recorded_frames, recording_source
 
         with lock:
             pressed_keys.discard(key)
@@ -471,30 +823,46 @@ def main() -> None:
             if not recording:
                 return
             recording = False
+            recording_source = None
             pressed_keys.clear()
             frames = list(recorded_frames)
             recorded_frames = []
             uid = utterance_id
 
         play_sound(sound_stop)
+        overlay.show_status("Processing…")
         print("  ⏳ Processing...")
-        threading.Thread(target=process_utterance, args=(frames, uid), daemon=True).start()
+        threading.Thread(target=process_utterance, args=(frames, uid, "push_to_talk"), daemon=True).start()
 
     # --- Ready ---
     print()
     print("  ✔ Ready!")
     print()
-    print("  Hold Right Option key to dictate. Ctrl+C to quit.")
+    if input_mode == "live":
+        print("  Live mode enabled. Speak naturally and pause to send. Ctrl+C to quit.")
+    else:
+        print("  Hold Right Option key to dictate. Ctrl+C to quit.")
     print()
 
-    with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+    if VERBOSE and routing_metrics is not None:
+        print(f"  Routing metrics: {routing_metrics.path}")
+
+    if input_mode == "live":
         try:
-            listener.join()
+            while True:
+                time.sleep(0.2)
         except KeyboardInterrupt:
             pass
+    else:
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
+            try:
+                listener.join()
+            except KeyboardInterrupt:
+                pass
 
     print("\n  Shutting down...")
     shutdown_event.set()
+    overlay.hide()
     mic.stop()
     cleanup.close()
     asr.unload()

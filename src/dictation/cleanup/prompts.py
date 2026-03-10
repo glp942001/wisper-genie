@@ -26,16 +26,6 @@ DO:
 4. Preserve wording unless a spoken correction makes the intent clearer
 5. Keep the speaker's exact tone, technical terms, and meaning"""
 
-_CASUAL_APPS = {
-    "slack", "discord", "messages", "signal", "telegram", "whatsapp",
-}
-_FORMAL_APPS = {
-    "mail", "outlook", "gmail", "linkedin",
-}
-_CODE_APPS = {
-    "code", "visual studio code", "cursor", "windsurf", "xcode",
-    "terminal", "iterm", "iterm2", "warp", "hyper", "kitty",
-}
 _SPACE_RE = re.compile(r"\s+")
 
 
@@ -44,42 +34,6 @@ def _compact_text(text: str, limit: int = 160) -> str:
     if len(text) <= limit:
         return text
     return text[-limit:].lstrip()
-
-
-def _classify_app(app_name: str) -> str:
-    name = app_name.lower().strip()
-    if name in _CASUAL_APPS:
-        return "casual"
-    if name in _FORMAL_APPS:
-        return "formal"
-    if name in _CODE_APPS:
-        return "code"
-    return "neutral"
-
-
-def _build_app_instruction(app_name: str) -> str:
-    if not app_name:
-        return ""
-
-    mode = _classify_app(app_name)
-    if mode == "casual":
-        return (
-            f"Target app: {app_name}. Casual chat style: keep phrasing natural, "
-            "lightly punctuated, and not overly formal."
-        )
-    if mode == "formal":
-        return (
-            f"Target app: {app_name}. Professional writing style: use clean sentence "
-            "boundaries and polished punctuation without changing wording."
-        )
-    if mode == "code":
-        return (
-            f"Target app: {app_name}. Code/editor style: preserve symbols, filenames, "
-            "CLI flags, acronyms, and technical casing exactly."
-        )
-    return (
-        f"Target app: {app_name}. Neutral style: just make the transcript read cleanly."
-    )
 
 
 # Few-shot examples teach conservative, minimal cleanup without encouraging
@@ -107,10 +61,6 @@ def build_cleanup_system(context: dict | None = None) -> str:
     parts = [CLEANUP_SYSTEM_BASE]
 
     if context:
-        app_instruction = _build_app_instruction(context.get("app_name", ""))
-        if app_instruction:
-            parts.append(f"\n{app_instruction}")
-
         field_text = _compact_text(context.get("field_text", ""))
         if field_text:
             parts.append(
@@ -132,6 +82,14 @@ def build_cleanup_system(context: dict | None = None) -> str:
         dict_hint = context.get("dictionary_hint", "")
         if dict_hint:
             parts.append(f"\n{dict_hint}")
+
+        style_hint = context.get("style_hint", "")
+        if style_hint:
+            parts.append(f"\n{style_hint}")
+
+        cleanup_hint = context.get("cleanup_hint", "")
+        if cleanup_hint:
+            parts.append(f"\n{cleanup_hint}")
 
         if context.get("has_backtrack"):
             parts.append(

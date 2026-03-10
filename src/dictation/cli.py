@@ -6,6 +6,8 @@ import sys
 import subprocess
 from pathlib import Path
 
+from dictation.telemetry.metrics import RoutingMetrics
+
 PLIST_NAME = "com.wisper-genie.dictation"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_NAME}.plist"
 WRAPPER_PATH = Path.home() / ".local" / "bin" / "wisper-genie"
@@ -65,7 +67,7 @@ def uninstall() -> None:
     import shutil
 
     genie_home = Path.home() / ".wisper-genie"
-    wrapper = Path.home() / ".local" / "bin" / "dictation"
+    wrapper = WRAPPER_PATH
     zshrc = Path.home() / ".zshrc"
 
     print("Wisper Genie — Uninstaller")
@@ -128,15 +130,45 @@ def uninstall() -> None:
     print("  To remove the model: ollama rm qwen3.5:2b")
 
 
+def show_metrics() -> None:
+    """Print a compact summary of recent local routing metrics."""
+    metrics = RoutingMetrics()
+    events = metrics.read_recent(limit=200)
+    if not events:
+        print(f"No routing metrics found at {metrics.path}")
+        return
+
+    dictations = [event for event in events if event.get("event") == "dictation"]
+    if not dictations:
+        print(f"No dictation events found in {metrics.path}")
+        return
+
+    avg_total = sum(event.get("timings", {}).get("total", 0.0) for event in dictations) / len(dictations)
+    direct_inserts = sum(1 for event in dictations if event.get("injection_route") == "direct")
+    cleanup_skips = sum(1 for event in dictations if not event.get("cleanup_used", True))
+    live_count = sum(1 for event in dictations if event.get("trigger_mode") == "live")
+    avg_conf = sum(event.get("asr_confidence", 0.0) for event in dictations) / len(dictations)
+
+    print(f"Metrics file: {metrics.path}")
+    print(f"Recent dictations: {len(dictations)}")
+    print(f"Average total latency: {avg_total:.1f}ms")
+    print(f"Average ASR confidence: {avg_conf:.2f}")
+    print(f"Direct insertions: {direct_inserts}/{len(dictations)}")
+    print(f"Cleanup skips: {cleanup_skips}/{len(dictations)}")
+    print(f"Live mode dictations: {live_count}/{len(dictations)}")
+
+
 def main() -> None:
     """Entry point for CLI subcommands."""
     if len(sys.argv) < 2:
-        print("Usage: python -m dictation.cli <subcommand>")
+        print("Usage: python -m dictation.cli <autostart|metrics|uninstall>")
         sys.exit(1)
 
     subcmd = sys.argv[1]
     if subcmd == "autostart":
         autostart(sys.argv[2:])
+    elif subcmd == "metrics":
+        show_metrics()
     elif subcmd == "uninstall":
         uninstall()
     else:

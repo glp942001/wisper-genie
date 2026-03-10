@@ -11,7 +11,13 @@ normalize_max_gain = 4.0
 normalize_min_rms = 250
 capture_restart_timeout_ms = 2000
 
+[input]
+mode = "push_to_talk" # "push_to_talk" or "live"
+live_silence_duration_ms = 450
+live_min_utterance_ms = 180
+
 [vad]
+threshold = 0.5
 frame_size_ms = 30
 pre_speech_frames = 2
 post_speech_frames = 3
@@ -34,6 +40,27 @@ timeout_ms = 10000
 backend = "clipboard_paste"
 # Delay in ms between clipboard set and paste keystroke
 paste_delay_ms = 30
+prefer_direct_insert = false
+prefer_typing_fallback = true
+typing_max_chars = 220
+
+[preview]
+enabled = false
+display_ms = 1200
+status_ms = 500
+before_insert_delay_ms = 180
+max_chars = 120
+
+[context]
+cache_ttl_ms = 1200
+
+[routing]
+alternative_hypotheses_enabled = true
+alternative_hypothesis_threshold = 0.72
+max_hypotheses = 4
+
+[metrics]
+enabled = true
 
 [hotkey]
 # Push-to-talk key (right Option key)

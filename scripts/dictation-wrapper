@@ -24,6 +24,9 @@ case "${1:-}" in
     autostart)
         python -m dictation.cli autostart "${@:2}"
         ;;
+    metrics)
+        python -m dictation.cli metrics
+        ;;
     uninstall)
         python -m dictation.cli uninstall
         ;;
@@ -36,6 +39,7 @@ case "${1:-}" in
         echo "  wisper-genie install      Re-run model setup"
         echo "  wisper-genie autostart    Launch on login"
         echo "  wisper-genie autostart --remove   Stop launching on login"
+        echo "  wisper-genie metrics      Show recent routing metrics"
         echo "  wisper-genie uninstall    Remove Wisper Genie from your system"
         echo "  wisper-genie --help       Show this help"
         ;;

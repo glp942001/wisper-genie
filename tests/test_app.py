@@ -1,8 +1,18 @@
 """Tests for app-level audio helpers."""
 
+import sys
+from unittest.mock import patch
+
 import numpy as np
 
-from dictation.app import _normalize_audio, _trim_audio_energy
+import dictation.app as app_module
+from dictation.app import (
+    _build_whisper_prompt_variants,
+    _normalize_audio,
+    _select_best_candidate,
+    _trim_audio_energy,
+)
+from dictation.asr.whisper_cpp import TranscriptionCandidate
 
 
 class TestAppHelpers:
@@ -30,3 +40,39 @@ class TestAppHelpers:
         audio = np.full(1600, 1000, dtype=np.int16)
         normalized = _normalize_audio(audio, target_peak=28000, max_gain=2.0, min_rms=10)
         assert int(np.max(np.abs(normalized))) == 2000
+
+    def test_select_best_candidate_uses_context_overlap(self):
+        candidates = [
+            TranscriptionCandidate(text="launch timing tomorrow", confidence=0.72, source="unprompted"),
+            TranscriptionCandidate(text="launch timing tuesday", confidence=0.7, source="prompted"),
+        ]
+
+        selected = _select_best_candidate(
+            candidates,
+            field_text="following up on launch timing for Tuesday",
+            selected_text="",
+            recent_utterances=["mention launch timing"],
+            dictionary_terms=["Tuesday"],
+        )
+
+        assert selected.text == "launch timing tuesday"
+
+    def test_build_whisper_prompt_variants_generates_multiple_unique_candidates(self):
+        variants = _build_whisper_prompt_variants(
+            recent_utterances=["follow up with Ollama tomorrow"],
+            dictionary_hint="Ollama, Whisper",
+            field_text="mention the launch timing",
+            selected_text="",
+            max_hypotheses=4,
+        )
+
+        assert len(variants) >= 3
+        assert variants[0][0] == "prompted_full"
+        assert variants[-1][0] == "unprompted"
+
+    def test_main_dispatches_cli_subcommands(self):
+        with patch.object(sys, "argv", ["wisper-genie", "metrics"]):
+            with patch("dictation.cli.main") as mock_cli_main:
+                app_module.main()
+
+        mock_cli_main.assert_called_once()

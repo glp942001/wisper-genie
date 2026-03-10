@@ -7,8 +7,10 @@ import pytest
 from dictation.context.screen import (
     FocusedTextDetails,
     _build_context_window,
+    build_insertion_text,
     build_replacement_text,
     get_screen_context,
+    insert_text_into_focused_element,
 )
 
 
@@ -57,6 +59,15 @@ class TestReplacementPlanning:
     def test_rejects_missing_match(self):
         with pytest.raises(ValueError, match="was not found"):
             build_replacement_text("hello world", "team", "crew")
+
+    def test_build_insertion_text_replaces_selection(self):
+        new_text, caret = build_insertion_text(
+            "hello world",
+            "team",
+            selected_range=(6, 5),
+        )
+        assert new_text == "hello team"
+        assert caret == (10, 0)
 
 
 class TestScreenContext:
@@ -107,3 +118,34 @@ class TestScreenContext:
         assert ctx["app_name"] == "Cursor"
         assert ctx["field_text"] == ""
         assert ctx["selected_text"] == "selected snippet"
+
+    @patch("dictation.context.screen.AXValueCreate")
+    @patch("dictation.context.screen.AXUIElementSetAttributeValue")
+    @patch("dictation.context.screen._get_focused_element")
+    def test_insert_text_into_focused_element_uses_preloaded_details(
+        self,
+        mock_get_element,
+        mock_set_attr,
+        mock_ax_value_create,
+    ):
+        focused_element = object()
+        mock_get_element.return_value = object()
+        mock_ax_value_create.return_value = object()
+        mock_set_attr.return_value = 0
+
+        ok, message = insert_text_into_focused_element(
+            " team",
+            details=FocusedTextDetails(
+                app_name="Mail",
+                full_text="hello",
+                field_text="hello",
+                selected_text="",
+                selected_range=(5, 0),
+                focused_element=focused_element,
+            ),
+        )
+
+        assert ok is True
+        assert message == ""
+        mock_get_element.assert_not_called()
+        assert mock_set_attr.call_count >= 1

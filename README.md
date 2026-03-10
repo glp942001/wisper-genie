@@ -6,17 +6,21 @@ Everything runs locally on your Mac. No audio leaves your machine.
 
 ## Features
 
-- **Push-to-talk dictation** — Hold Right Option, speak, release. Text appears instantly.
-- **App-aware formatting** — Detects the active app and adapts tone: casual for Slack, professional for Mail, code-aware for VS Code.
+- **Push-to-talk or live dictation** — Hold Right Option for precise capture, or switch to live mode and speak naturally with VAD-based endpointing.
 - **Screen context** — Reads text near the cursor in the focused field so it continues naturally (capitalization, tone, sentence flow).
+- **Ghost preview overlay** — Shows a transient HUD with the text about to be inserted before it lands in the field.
 - **Backtrack detection** — Say "actually" or "scratch that" mid-sentence and it rewrites to your corrected intent.
 - **Multi-utterance context** — Remembers your last few utterances so follow-up dictation flows naturally.
+- **Personal writing memory** — Learns preferred punctuation, capitalization, sign-offs, and common phrases locally on disk.
 - **Personal dictionary** — Add names, jargon, and acronyms to `config/dictionary.toml` for better recognition.
 - **Voice commands** — "Delete that", "undo", "select all", "replace X with Y".
-- **LLM cleanup** — Fixes punctuation, capitalization, contractions, filler words, and false starts via a local LLM.
+- **Multi-hypothesis ASR reranking** — Can compare multiple prompted variants plus an unprompted baseline against screen context and dictionary terms.
+- **Direct insertion first** — Uses Accessibility-based text insertion when supported, then falls back to typed-text events or clipboard paste safely.
+- **LLM cleanup always-on** — Every non-command utterance goes through the local LLM for punctuation, capitalization, contractions, filler cleanup, and phrasing polish.
 - **Entity formatting** — Numbers, dates, and currencies formatted naturally ("twenty dollars" becomes "$20").
 - **Smart mic selection** — Auto-detects AirPods and external mics, prefers them over built-in.
 - **Whisper hallucination filtering** — Strips `[BLANK_AUDIO]` and other artifacts from silent recordings.
+- **Local routing metrics** — Writes per-utterance timing and routing decisions to a local JSONL log for tuning.
 - **Auto-start on login** — Optional launch agent via `wisper-genie autostart`.
 
 ## Requirements
@@ -51,6 +55,7 @@ After installation, open a new terminal (or run `source ~/.zshrc`) and you're re
 
 ```bash
 wisper-genie              # Start dictating
+wisper-genie metrics      # Show recent routing/latency summary
 wisper-genie --help       # Show all commands
 wisper-genie install      # Re-download models if needed
 wisper-genie autostart    # Launch on login
@@ -60,10 +65,10 @@ wisper-genie uninstall    # Remove Wisper Genie completely
 
 **Dictating:**
 
-1. Run `dictation`
-2. Hold **Right Option** key
-3. Speak naturally
-4. Release the key — formatted text is pasted at your cursor
+1. Run `wisper-genie`
+2. In push-to-talk mode, hold **Right Option**, speak, and release
+3. In live mode, speak naturally and pause briefly to send
+4. A ghost preview appears, then the final text is inserted directly when possible, or pasted as a fallback
 
 **Voice commands** (say these instead of dictating text):
 
@@ -89,12 +94,16 @@ wisper-genie uninstall    # Remove Wisper Genie completely
 ## Architecture
 
 ```
-Audio → ASR (Whisper small, with initial_prompt from dictionary + context)
+Audio → Capture ring buffer / live VAD
+  → Context prefetch (frontmost app + focused field snapshot)
+  → ASR (Whisper small, multiple prompt variants + unprompted baseline)
+  → Candidate reranking (screen context + history + dictionary)
   → Normalize (filler removal, dictation commands, backtrack detection)
   → Voice command check (routes commands to handler, skips LLM)
-  → Screen context capture (active app name + text field content via AX APIs)
-  → LLM cleanup (Ollama qwen3.5:2b, with full context: app, field, history, dictionary)
-  → Text injection (NSPasteboard + CGEvent Cmd+V)
+  → LLM cleanup (Ollama qwen3.5:2b, with field, history, dictionary, and writing memory)
+  → Ghost preview overlay
+  → Direct AX insertion, typed-text fallback, or clipboard fallback
+  → Local style-memory + routing metrics persistence
 ```
 
 ### Components
@@ -104,15 +113,20 @@ Audio → ASR (Whisper small, with initial_prompt from dictionary + context)
 | Orchestrator | `src/dictation/app.py` | Main pipeline, hotkey listener, threading |
 | ASR | `src/dictation/asr/whisper_cpp.py` | Whisper.cpp with Metal acceleration |
 | Audio capture | `src/dictation/audio/capture.py` | Mic input via sounddevice, auto-selection |
+| Live VAD | `src/dictation/audio/vad.py` | Speech start/end detection for hands-free mode |
 | Transcript buffer | `src/dictation/transcript/buffer.py` | Filler removal, dictation commands, backtrack |
 | LLM cleanup | `src/dictation/cleanup/ollama.py` | Ollama API adapter, fail-open design |
 | Prompts | `src/dictation/cleanup/prompts.py` | Dynamic prompt building with context |
 | Screen context | `src/dictation/context/screen.py` | App name + text field via macOS AX APIs |
+| Context cache | `src/dictation/context/cache.py` | Prefetches and reuses focused field metadata |
+| Style memory | `src/dictation/context/style_memory.py` | Learns local writing preferences from accepted output |
 | Dictionary | `src/dictation/context/dictionary.py` | Custom vocabulary loader |
 | Voice commands | `src/dictation/commands/handler.py` | Command detection and execution |
-| Text injection | `src/dictation/output/injector.py` | Clipboard paste via native macOS APIs |
+| Preview overlay | `src/dictation/output/overlay.py` | Ghost HUD before insertion |
+| Text injection | `src/dictation/output/injector.py` | Direct AX insertion with clipboard fallback |
 | Latency tracker | `src/dictation/telemetry/latency.py` | Per-stage timing and budget warnings |
-| CLI | `src/dictation/cli.py` | Autostart subcommand |
+| Routing metrics | `src/dictation/telemetry/metrics.py` | Local JSONL event log for routing and latency |
+| CLI | `src/dictation/cli.py` | Autostart, uninstall, and metrics subcommands |
 
 ## Configuration
 
@@ -121,6 +135,9 @@ Audio → ASR (Whisper small, with initial_prompt from dictionary + context)
 ```toml
 [audio]
 device = "auto"          # "auto" prefers AirPods/external, "default" for system default
+
+[input]
+mode = "push_to_talk"    # or "live"
 
 [asr]
 model_path = "models/ggml-small.bin"
@@ -132,6 +149,19 @@ timeout_ms = 10000       # Fail-open: raw text used if LLM is slow/down
 
 [hotkey]
 keys = ["<alt_r>"]       # Right Option key
+
+[output]
+prefer_direct_insert = true
+prefer_typing_fallback = true
+
+[preview]
+enabled = true
+
+[metrics]
+enabled = true
+
+[routing]
+max_hypotheses = 4
 
 [latency]
 total_budget_ms = 800    # Warning threshold
@@ -158,15 +188,6 @@ These terms are injected into both the Whisper prompt (for better recognition) a
 
 ## How It Works
 
-### App-aware formatting
-
-The tool reads the frontmost app via `NSWorkspace` and classifies it:
-
-- **Casual** (Slack, Discord, Messages) — short sentences, contractions, relaxed tone
-- **Formal** (Mail, Outlook, LinkedIn) — complete sentences, professional tone
-- **Code** (VS Code, Cursor, Terminal) — preserves technical terms, flags, filenames, and casing
-- **Neutral** (everything else) — balanced formatting
-
 ### Screen context
 
 Using macOS Accessibility APIs, the tool reads text near the insertion point in the focused field when available. This lets the LLM:
@@ -176,6 +197,18 @@ Using macOS Accessibility APIs, the tool reads text near the insertion point in 
 - Avoid re-greeting in replies
 
 For destructive voice commands like "replace X with Y", the app only applies the change when the match is unambiguous or the exact target text is already selected.
+
+### Live mode and cached context
+
+When live mode is enabled, Silero VAD starts a dictation segment when speech begins and ends it after a short silence. On either hotkey press or live speech start, the app prefetches screen context and caches it briefly so cleanup and insertion can reuse the same focused-field snapshot.
+
+### Local writing memory
+
+Accepted output is stored as local style hints in `~/.wisper-genie/style_memory.json`. Those hints bias cleanup toward the user's preferred punctuation density, capitalization, greetings, sign-offs, and common phrases without sending anything off-device.
+
+### Routing metrics
+
+Each dictation can write a local event to `~/.wisper-genie/routing_metrics.jsonl`, including ASR confidence, candidate count, injection route, and per-stage timings. Use `wisper-genie metrics` to print a compact summary.
 
 ### Fail-open design
 
@@ -246,6 +279,7 @@ Note: `test_asr.py` and `test_injector.py` require native macOS dependencies (`p
 **Text doesn't appear / paste doesn't work**
 - Grant Accessibility permission to your terminal app
 - System Settings → Privacy & Security → Accessibility → add your terminal
+- If direct insertion is unsupported in the current app, Wisper Genie will fall back to clipboard paste automatically
 
 **Ollama errors / "Fail-open" messages**
 - Make sure Ollama is running: `ollama serve` or open Ollama.app
@@ -255,6 +289,10 @@ Note: `test_asr.py` and `test_injector.py` require native macOS dependencies (`p
 **"command not found: wisper-genie"**
 - Run `source ~/.zshrc` or open a new terminal
 - Verify: `ls ~/.local/bin/wisper-genie`
+
+**Inspect routing quality and latency**
+- Run `wisper-genie metrics`
+- Check `~/.wisper-genie/routing_metrics.jsonl` for per-utterance details
 
 **Uninstall**
 ```bash

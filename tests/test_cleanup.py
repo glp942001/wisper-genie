@@ -45,23 +45,18 @@ class TestPrompts:
     def test_system_prompt_includes_context_hints(self):
         system = build_cleanup_system(
             {
-                "app_name": "Slack",
                 "field_text": "following up on the launch timing",
                 "recent_utterances": ["let's keep it short", "mention the beta users"],
                 "dictionary_hint": "Custom vocabulary: Ollama, Whisper",
+                "style_hint": "User writing memory: prefers strong punctuation.",
                 "has_backtrack": True,
             }
         )
-        assert "Slack" in system
         assert "launch timing" in system
         assert "beta users" in system
         assert "Ollama" in system
+        assert "writing memory" in system
         assert "corrected themselves" in system
-
-    def test_system_prompt_uses_code_app_instruction(self):
-        system = build_cleanup_system({"app_name": "Cursor"})
-        assert "code/editor style" in system.lower()
-        assert "technical casing" in system.lower()
 
 
 class TestOllamaCleanup:
@@ -106,6 +101,22 @@ class TestOllamaCleanup:
         payload = call_args[1]["json"]
         assert "messages" in payload
         assert payload["keep_alive"] == "10m"
+
+    @patch("dictation.cleanup.ollama.httpx.Client")
+    def test_cleanup_uses_fixed_generation_budget(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"message": {"content": "Test."}}
+        mock_response.raise_for_status.return_value = None
+        mock_client.post.return_value = mock_response
+        mock_client_cls.return_value = mock_client
+
+        cleanup = OllamaCleanup()
+        cleanup._client = mock_client
+        cleanup.cleanup("test")
+
+        payload = mock_client.post.call_args[1]["json"]
+        assert payload["options"]["num_predict"] == 128
 
     @patch("dictation.cleanup.ollama.httpx.Client")
     def test_any_exception_returns_raw(self, mock_client_cls):
@@ -157,7 +168,6 @@ class TestOllamaCleanup:
         cleanup.cleanup(
             "ill send the update soon",
             context={
-                "app_name": "Mail",
                 "field_text": "thanks again for the quick turnaround",
                 "recent_utterances": ["we should sound polished here"],
                 "dictionary_hint": "Custom vocabulary: Ollama",
@@ -166,7 +176,6 @@ class TestOllamaCleanup:
 
         call_args = mock_client.post.call_args
         system_msg = call_args[1]["json"]["messages"][0]["content"]
-        assert "Mail" in system_msg
         assert "turnaround" in system_msg
         assert "polished" in system_msg
         assert "Ollama" in system_msg

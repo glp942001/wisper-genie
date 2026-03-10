@@ -8,6 +8,8 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from dictation.asr.whisper_cpp import TranscriptionCandidate
+
 
 SAMPLE_RATE = 16000
 FRAME_DURATION_MS = 30
@@ -52,6 +54,11 @@ def mock_asr():
     """A mock ASR adapter that returns a fixed transcript."""
     mock = MagicMock()
     mock.transcribe.return_value = "hello world this is a test"
+    mock.transcribe_candidate.return_value = TranscriptionCandidate(
+        text="hello world this is a test",
+        confidence=0.9,
+        source="primary",
+    )
     mock.load.return_value = None
     return mock
 
@@ -70,8 +77,9 @@ def mock_injector():
     mock = MagicMock()
     mock.injected: list[str] = []
 
-    def record_inject(text: str) -> None:
+    def record_inject(text: str, **kwargs) -> str:
         mock.injected.append(text)
+        return "clipboard"
 
     mock.inject.side_effect = record_inject
     return mock

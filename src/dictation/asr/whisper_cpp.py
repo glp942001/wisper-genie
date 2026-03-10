@@ -2,32 +2,67 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import re
 
 import numpy as np
 from pywhispercpp.model import Model as WhisperModel
+from pywhispercpp.model import Segment
 
-# Whisper hallucination tokens emitted on silence or near-silence.
 _HALLUCINATION_PATTERN = re.compile(
     r"\[(?:BLANK_AUDIO|BLANK|SILENCE|MUSIC|APPLAUSE|LAUGHTER)\]",
     re.IGNORECASE,
 )
-
-# Whisper parenthetical annotations — sound descriptions, not speech.
-# Examples: (air whooshing), (laughing), (sighing), (clapping), (buzzing)
 _ANNOTATION_PATTERN = re.compile(
     r"\([a-z\s]{2,30}\)",
     re.IGNORECASE,
 )
 
 
-class WhisperCppAdapter:
-    """ASR adapter backed by whisper.cpp with Metal acceleration.
+@dataclass(frozen=True)
+class TranscriptionCandidate:
+    text: str
+    confidence: float
+    source: str
 
-    Conforms to the ASRAdapter protocol.
-    """
+
+@dataclass(frozen=True)
+class TranscriptionResult:
+    text: str
+    confidence: float
+    candidates: tuple[TranscriptionCandidate, ...]
+
+
+def _candidate_from_segments(segments: list[Segment], source: str) -> TranscriptionCandidate:
+    parts = []
+    probabilities = []
+    for seg in segments:
+        part = seg.text.strip()
+        if not part:
+            continue
+        part = _HALLUCINATION_PATTERN.sub("", part).strip()
+        part = _ANNOTATION_PATTERN.sub("", part).strip()
+        if not part:
+            continue
+        parts.append(part)
+        probability = float(getattr(seg, "probability", np.nan))
+        if not np.isnan(probability):
+            probabilities.append(probability)
+
+    text = " ".join(parts).strip()
+    if probabilities:
+        confidence = float(sum(probabilities) / len(probabilities))
+    elif text:
+        confidence = 0.65
+    else:
+        confidence = 0.0
+    return TranscriptionCandidate(text=text, confidence=confidence, source=source)
+
+
+class WhisperCppAdapter:
+    """ASR adapter backed by whisper.cpp with Metal acceleration."""
 
     def __init__(
         self,
@@ -41,7 +76,6 @@ class WhisperCppAdapter:
         self._model: WhisperModel | None = None
 
     def load(self) -> None:
-        """Load the whisper.cpp model."""
         if not self._model_path.exists():
             raise FileNotFoundError(
                 f"Whisper model not found: {self._model_path}\n"
@@ -60,42 +94,56 @@ class WhisperCppAdapter:
         )
 
     def transcribe(self, audio: np.ndarray, initial_prompt: str | None = None) -> str:
-        """Transcribe int16 PCM audio to text.
+        return self.transcribe_detailed(audio, initial_prompt=initial_prompt).text
 
-        Args:
-            audio: int16 PCM at 16kHz, shape (N,) or (N, 1).
-            initial_prompt: Optional text to bias Whisper toward expected
-                vocabulary (e.g., personal dictionary terms, recent context).
-
-        Returns:
-            Transcribed text, stripped of leading/trailing whitespace.
-        """
+    def transcribe_candidate(
+        self,
+        audio: np.ndarray,
+        *,
+        initial_prompt: str | None = None,
+        source: str | None = None,
+    ) -> TranscriptionCandidate:
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
 
-        # whisper.cpp expects float32 in [-1, 1]
-        # Use 32767.0 for correct int16 range normalization
         audio_f32 = audio.ravel().astype(np.float32) / 32767.0
+        segments = self._model.transcribe(
+            audio_f32,
+            extract_probability=True,
+            **({"initial_prompt": initial_prompt} if initial_prompt else {}),
+        )
+        candidate_source = source or ("prompted" if initial_prompt else "unprompted")
+        return _candidate_from_segments(segments, candidate_source)
 
-        # pywhispercpp accepts initial_prompt as a keyword arg
-        kwargs = {}
-        if initial_prompt:
-            kwargs["initial_prompt"] = initial_prompt
+    def transcribe_detailed(
+        self,
+        audio: np.ndarray,
+        *,
+        initial_prompt: str | None = None,
+        include_alternative: bool = False,
+    ) -> TranscriptionResult:
+        primary = self.transcribe_candidate(
+            audio,
+            initial_prompt=initial_prompt,
+            source="prompted",
+        )
+        candidates = [primary]
 
-        segments = self._model.transcribe(audio_f32, **kwargs)
+        if include_alternative:
+            alternate = self.transcribe_candidate(
+                audio,
+                initial_prompt=None,
+                source="unprompted",
+            )
+            if alternate.text and alternate.text != primary.text:
+                candidates.append(alternate)
 
-        # Collect text from all segments, filtering hallucination tokens
-        parts = []
-        for seg in segments:
-            part = seg.text.strip()
-            if not part:
-                continue
-            part = _HALLUCINATION_PATTERN.sub("", part).strip()
-            part = _ANNOTATION_PATTERN.sub("", part).strip()
-            if part:
-                parts.append(part)
-        return " ".join(parts).strip()
+        selected = max(candidates, key=lambda candidate: candidate.confidence)
+        return TranscriptionResult(
+            text=selected.text,
+            confidence=selected.confidence,
+            candidates=tuple(candidates),
+        )
 
     def unload(self) -> None:
-        """Release the model from memory."""
         self._model = None

@@ -8,22 +8,53 @@ from dictation.output.injector import ClipboardInjector
 class TestClipboardInjector:
     def test_empty_text_does_nothing(self):
         injector = ClipboardInjector()
-        # Should not raise
-        injector.inject("")
+        assert injector.inject("") == "skipped"
+
+    @patch("dictation.output.injector.insert_text_into_focused_element")
+    def test_inject_prefers_direct_insertion_when_available(self, mock_insert):
+        mock_insert.return_value = (True, "")
+
+        injector = ClipboardInjector(prefer_direct_insertion=True)
+        route = injector.inject("hello world", prefer_direct=True)
+
+        assert route == "direct"
+        mock_insert.assert_called_once()
+
+    @patch("dictation.output.injector.insert_text_into_focused_element")
+    @patch("dictation.output.injector.AppKit")
+    def test_inject_uses_typing_fallback_when_paste_events_fail(self, mock_appkit, mock_insert):
+        mock_insert.return_value = (False, "unsupported")
+        mock_pasteboard = MagicMock()
+        mock_appkit.NSPasteboard.generalPasteboard.return_value = mock_pasteboard
+
+        injector = ClipboardInjector(prefer_direct_insertion=True, paste_delay_ms=0)
+        injector._pasteboard = mock_pasteboard
+        with patch.object(injector, "_type_text", return_value=True) as mock_type:
+            with patch.object(injector, "_paste", return_value=False) as mock_paste:
+                route = injector.inject("hello world")
+
+        assert route == "typing"
+        mock_paste.assert_called_once()
+        mock_type.assert_called_once_with("hello world")
 
     @patch("dictation.output.injector.Quartz")
     @patch("dictation.output.injector.AppKit")
-    def test_inject_sets_clipboard_and_pastes(self, mock_appkit, mock_quartz):
+    @patch("dictation.output.injector.insert_text_into_focused_element")
+    def test_inject_sets_clipboard_and_pastes(self, mock_insert, mock_appkit, mock_quartz):
+        mock_insert.return_value = (False, "unsupported")
         mock_pasteboard = MagicMock()
         mock_appkit.NSPasteboard.generalPasteboard.return_value = mock_pasteboard
 
         injector = ClipboardInjector(paste_delay_ms=0)
         injector._pasteboard = mock_pasteboard
-        injector.inject("hello world")
+        with patch.object(injector, "_type_text", return_value=False) as mock_type:
+            route = injector.inject("hello world")
 
-        # clearContents called twice: once in _set_clipboard (before writing)
-        # and once in finally block (to clear sensitive text after paste)
-        assert mock_pasteboard.clearContents.call_count == 2
+        # Clipboard stays populated after paste so slow targets still have time
+        # to read it. It is cleared on the next recording start.
+        assert route == "clipboard"
+        mock_type.assert_not_called()
+        assert mock_pasteboard.clearContents.call_count == 1
         mock_pasteboard.setString_forType_.assert_called_once()
         assert mock_quartz.CGEventPost.call_count == 2
 
@@ -47,6 +78,15 @@ class TestClipboardInjector:
         mock_quartz.CGEventCreateKeyboardEvent.return_value = None
 
         injector = ClipboardInjector()
-        injector._paste()  # Should not raise
+        assert injector._paste() is False
 
         mock_quartz.CGEventPost.assert_not_called()
+
+    @patch("dictation.output.injector.Quartz")
+    def test_type_text_posts_unicode_events(self, mock_quartz):
+        mock_quartz.CGEventCreateKeyboardEvent.side_effect = [MagicMock(), MagicMock()]
+
+        injector = ClipboardInjector()
+        assert injector._type_text("hello") is True
+        assert mock_quartz.CGEventKeyboardSetUnicodeString.call_count == 2
+        assert mock_quartz.CGEventPost.call_count == 2

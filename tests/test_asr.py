@@ -47,6 +47,53 @@ class TestWhisperCppAdapter:
         mock_model.transcribe.assert_called_once()
 
     @patch("dictation.asr.whisper_cpp.WhisperModel")
+    def test_transcribe_candidate_returns_confidence_and_source(self, mock_model_cls, tmp_path, short_audio):
+        model_file = tmp_path / "model.bin"
+        model_file.touch()
+
+        mock_model = MagicMock()
+        mock_segment = MagicMock()
+        mock_segment.text = " Hello world "
+        mock_segment.probability = 0.83
+        mock_model.transcribe.return_value = [mock_segment]
+        mock_model_cls.return_value = mock_model
+
+        adapter = WhisperCppAdapter(model_path=model_file)
+        adapter.load()
+        result = adapter.transcribe_candidate(short_audio, initial_prompt="hello", source="prompted")
+
+        assert result.text == "Hello world"
+        assert result.confidence == pytest.approx(0.83)
+        assert result.source == "prompted"
+
+    @patch("dictation.asr.whisper_cpp.WhisperModel")
+    def test_transcribe_detailed_can_include_alternative(self, mock_model_cls, tmp_path, short_audio):
+        model_file = tmp_path / "model.bin"
+        model_file.touch()
+
+        mock_model = MagicMock()
+        first = MagicMock()
+        first.text = " slack update "
+        first.probability = 0.55
+        second = MagicMock()
+        second.text = " Slack update "
+        second.probability = 0.81
+        mock_model.transcribe.side_effect = [[first], [second]]
+        mock_model_cls.return_value = mock_model
+
+        adapter = WhisperCppAdapter(model_path=model_file)
+        adapter.load()
+        result = adapter.transcribe_detailed(
+            short_audio,
+            initial_prompt="slack",
+            include_alternative=True,
+        )
+
+        assert result.text == "Slack update"
+        assert result.confidence == pytest.approx(0.81)
+        assert [candidate.source for candidate in result.candidates] == ["prompted", "unprompted"]
+
+    @patch("dictation.asr.whisper_cpp.WhisperModel")
     def test_transcribe_uses_ravel(self, mock_model_cls, tmp_path):
         """Verify audio is passed as float32 normalized by 32767."""
         model_file = tmp_path / "model.bin"
